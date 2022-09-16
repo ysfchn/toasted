@@ -1,0 +1,35 @@
+name: Upload Python Package
+
+on:
+  release:
+    types: [published]
+  push:
+    branches:
+      - dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+    - name: Install poetry
+      uses: abatilo/actions-poetry@v2
+      with:
+          poetry-version: 1.2.1
+    - name: Publish package
+      if: github.event_name == 'release'
+      run: |
+        poetry publish --build -u __token__ -p ${PYPI_API_TOKEN}
+      env:
+        PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+    - name: Publish to TestPyPI
+      if: github.event_name == 'push'
+      run: |
+        poetry config repositories.testpypi https://test.pypi.org/legacy/
+        poetry publish --build -r testpypi -u __token__ -p ${TEST_PYPI_API_TOKEN}
+      env:
+        TEST_PYPI_API_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}

@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "toasted"
+version = "0.1.0"
+description = "Toast notifications library for Windows, built on top of WinRT."
+authors = ["ysfchn <54748183+ysfchn@users.noreply.github.com>"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/ysfchn/toasted"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows"
+]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+httpx = ">=0.20.0,<0.21.0"
+winsdk = ">=1.0.0b6,<1.1.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

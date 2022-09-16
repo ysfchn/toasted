@@ -1,0 +1,33 @@
+{
+    "arguments": "foo",
+    "toast_id": "mytoast",
+    "group_id": "mygroup",
+    "elements": [
+        {
+            "@type": "image",
+            "source": "https://iili.io/iIzDJe.png",
+            "placement": "HERO"
+        },
+        {
+            "@type": "image",
+            "source": "https://iili.io/iIzb5u.jpg",
+            "placement": "LOGO",
+            "is_circle": true
+        },
+        {
+            "@type": "text",
+            "content": "Data Transfer"
+        },
+        {
+            "@type": "text",
+            "content": "Transferring to @ysfchn..."
+        },
+        {
+            "@type": "progress",
+            "value": 0.75,
+            "title": "projects.zip",
+            "status": "Sending...",
+            "display_value": "75% (0.75 / 1.00 GB)"
+        }
+    ]
+}
