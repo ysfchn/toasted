@@ -1,8 +1,8 @@
 __all__ = ["Toast"]
 
-from toasted.common import ToastElementContainer, ToastElement, get_enum, xml
+from toasted.common import ToastElementContainer, ToastElement, get_enum, xml, ToastResult
 from toasted.enums import ToastDuration, ToastScenario, ToastSound, ToastElementType, ToastNotificationMode
-from toasted.elements import Image, Button, _create_element
+from toasted.elements import _create_element
 import asyncio
 from ctypes import windll
 from datetime import datetime
@@ -10,6 +10,7 @@ import sys
 import locale
 from tempfile import NamedTemporaryFile
 import httpx
+import winsound
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from winsdk.windows.ui.notifications import (
     ToastNotification, 
@@ -19,8 +20,7 @@ from winsdk.windows.ui.notifications import (
     ToastFailedEventArgs,
     ToastNotifier,
     NotificationSetting,
-    NotificationData,
-    NotificationUpdateResult
+    NotificationData
 )
 from winsdk._winrt import Object
 from winsdk.windows.foundation import IPropertyValue, EventRegistrationToken
@@ -56,9 +56,6 @@ class Toast(ToastElementContainer):
             URGENT:  An important notification. This allows users to have more control over what apps can send them 
                 high-priority toast notifications that can break through Focus Assist (Do not Disturb). 
                 This can be modified in the notifications settings.
-        use_button_style:
-            Specifies whether styled buttons should be used. The styling of the button is determined by the
-            "button_style" property on Button object.
         group_id:
             Group ID that this toast belongs in. Used for deleting a notification from Action Center.
         toast_id:
@@ -103,12 +100,11 @@ class Toast(ToastElementContainer):
         duration : Optional[ToastDuration] = None, 
         timestamp : Optional[datetime] = None,
         scenario : Optional[ToastScenario] = None,
-        use_button_style : bool = True,
         group_id : Optional[str] = None,
         toast_id : Optional[str] = None,
         show_popup : bool = True,
         base_path : Optional[str] = None,
-        sound : Optional[ToastSound] = ToastSound.DEFAULT,
+        sound : Optional[str] = ToastSound.DEFAULT,
         sound_loop : bool = False,
         remote_images : bool = True,
         add_query_params : bool = False,
@@ -119,10 +115,9 @@ class Toast(ToastElementContainer):
         self.arguments = arguments
         self.scenario = scenario
         self.timestamp = timestamp
-        self.use_button_style = use_button_style
         self.show_popup = show_popup
         self.base_path = base_path
-        self.sound = sound
+        self.sound = sound or None
         self.sound_loop = sound_loop
         self.remote_images = remote_images
         self.add_query_params = add_query_params
@@ -136,6 +131,7 @@ class Toast(ToastElementContainer):
         self._mute_sound_override : bool = False
         self._temp_files : List[Any] = []
         self._called_by_show : bool = False
+        self._toast_result : Optional[ToastResult] = None
 
 
     def __copy__(self) -> "Toast":
@@ -143,7 +139,6 @@ class Toast(ToastElementContainer):
             duration = self.duration,
             arguments = self.arguments,
             scenario = self.scenario,
-            use_button_style = self.use_button_style,
             toast_id = self.toast_id,
             group_id = self.group_id,
             show_popup = self.show_popup,
@@ -168,13 +163,12 @@ class Toast(ToastElementContainer):
             duration = get_enum(ToastDuration, json.get("duration", None)),
             arguments = json.get("arguments", None),
             scenario = get_enum(ToastScenario, json.get("scenario", None)),
-            use_button_style = bool(json.get("use_button_style", True)),
             group_id = str(json.get("group_id", "")) or None,
             toast_id = str(json.get("toast_id", "")) or None,
             show_popup = bool(json.get("show_popup", True)),
             base_path = str(json.get("base_path", "")) or None,
             timestamp = None if "timestamp" not in json else datetime.fromisoformat(json["timestamp"]),
-            sound = get_enum(ToastSound, json.get("sound", "DEFAULT")),
+            sound = json.get("sound", ToastSound.DEFAULT),
             sound_loop = bool(json.get("sound_loop", False)),
             remote_images = bool(json.get("remote_images", True)),
             add_query_params = bool(json.get("add_query_params", False)),
@@ -185,24 +179,10 @@ class Toast(ToastElementContainer):
         return toast
 
 
-    def handler(self, function : Optional[Callable[[str, Dict[str, str], int], None]] = None):
+    def handler(self, function : Optional[Callable[[ToastResult], None]] = None):
         """
         A decorator that calls the function when user has clicked or dismissed the toast.
-
-        Passed positional parameters to function:
-            arguments:
-                If the toast itself has clicked, the "arguments" will be this toast's arguments, 
-                if a button has clicked, then the "arguments" will be the button's own "arguments" value.
-                This is used for tracking which button has clicked. If toast has dismissed, this will be
-                a blank string.
-            user_input:
-                A dictionary of inputs mapped with input IDs and input values.
-            dismiss_reason:
-                The reason of why toast has dismissed.
-                NOT_DISMISSED = -1
-                USER_CANCELED = 0
-                APPLICATION_HIDDEN = 1
-                TIMED_OUT = 2
+        An instance of ToastResult will be passed to the handler.
         """
         if function:
             self._toast_handler = function
@@ -217,10 +197,7 @@ class Toast(ToastElementContainer):
     def shown(self, function : Optional[Callable] = None):
         """
         A decorator that calls the function when toast has shown with show().
-
-        Passed positional parameters to function:
-            data:
-                The notification data passed to show().
+        The notification data passed to show() will be passed to the handler.
         """
         if function:
             self._show_handler = function
@@ -237,40 +214,38 @@ class Toast(ToastElementContainer):
 
 
     def to_xml(self) -> str:
+        # Cleanup old cached images.
         self._cleanup_images()
-        visual = ""
-        actions = ""
-        other = ""
+        output = ["", "", ""]
+        # 1st - Visual
+        # 2nd - Action
+        # 3rd - Other
+        using_custom_style : bool = False
         for element in self.data:
-            replace_source = None
             if not isinstance(element, ToastElement):
                 raise ValueError("Element must be a type of ToastElement:", element)
-            if element.ELEMENT_TYPE == ToastElementType.VISUAL:
-                # If remote images are enabled, and to_xml() called by show(), cache online images.
-                if self.remote_images and self._called_by_show:
-                    if element.__class__ == Image:
-                        if element.source.startswith("http"):
-                            replace_source = self._download_image(element.source, self.add_query_params) or ""
-                el = element.to_xml()
-                # Replace with temp file path without modifying the original element.
-                if replace_source:
-                    el = el.replace("src=\"" + element.source + "\"", "src=\"" + replace_source + "\"")
-                visual += el
-            elif element.ELEMENT_TYPE == ToastElementType.ACTION:
-                # If remote images are enabled, and to_xml() called by show(), cache online images.
-                if self.remote_images and self._called_by_show:
-                    if element.__class__ == Button:
-                        if element.icon and element.icon.startswith("http"):
-                            element.icon = self._download_image(element.icon, self.add_query_params) or ""
-                el = element.to_xml()
-                # Replace with temp file path without modifying the original element.
-                if replace_source:
-                    el = el.replace("imageUri=\"" + element.icon + "\"", "imageUri=\"" + replace_source + "\"")
-                actions += el
-            else:
-                other += element.to_xml()
+            el = element.to_xml()
+            # Download remote images to disk, and replace the URL
+            # with the cached image's file path by editing the output XML.
+            if self.remote_images and self._called_by_show:
+                for src_val, src_key in (element._list_remote_images() or []):
+                    new_val = self._download_image(src_val, self.add_query_params) or ""
+                    el = el.replace(
+                        src_key + "=\"" + src_val + "\"", 
+                        src_key + "=\"" + new_val + "\""
+                    )
+            # Enable custom styles on the toast
+            # if button has a custom style.
+            if "hint-buttonStyle=\"" in el:
+                using_custom_style = True
+            # Append output XML to list.
+            output[
+                0 if element.ELEMENT_TYPE == ToastElementType.VISUAL else
+                1 if element.ELEMENT_TYPE == ToastElementType.ACTION else
+                2
+            ] += el
         # Add notification sound properties
-        other += xml(
+        output[2] += xml(
             "audio", 
             src = self.sound,
             silent = self._mute_sound_override or (self.sound == None),
@@ -284,36 +259,59 @@ class Toast(ToastElementContainer):
                     "visual", 
                     xml(
                         "binding", 
-                        visual,
+                        output[0],
                         template = "ToastGeneric"
                     ),
                     baseUri = self.base_path or "file:///"
-                ) + ("" if not actions else \
+                ) + ("" if not output[1] else \
                 xml(
                     "actions", 
-                    actions
-                )) + other,
+                    output[1]
+                )) + output[2],
             launch = self.arguments,
             duration = None if not self.duration else self.duration.value,
             scenario = None if not self.scenario else self.scenario.value,
             displayTimestamp = None if not self.timestamp else self.timestamp.isoformat(),
-            useButtonStyle = self.use_button_style
+            useButtonStyle = using_custom_style or None
         )
+
+
+    def _to_xml_document(self, mute_sound : bool) -> dom.XmlDocument:
+        self._mute_sound_override = mute_sound
+        self._called_by_show = True
+        xmldata = self.to_xml()
+        xml = dom.XmlDocument()
+        xml.load_xml(xmldata)
+        return xml
+
+
+    def _build_notification_data(self, data : dict) -> NotificationData:
+        x = NotificationData()
+        for k, v in data.items():
+            x.values[k] = str(v)
+        return x
 
 
     def _handle_toast_activated(self, toast : ToastNotification, args : Object):
         eventargs = ToastActivatedEventArgs._from(args)
+        result = ToastResult(
+            arguments = eventargs.arguments,
+            inputs = ({} if not eventargs.user_input else {
+                x : IPropertyValue._from(y).get_string() for x, y in eventargs.user_input.items()
+            }),
+            show_data = dict(toast.data.values.items()),
+            dismiss_reason = -1
+        )
+        self._toast_result = result
         if self._toast_handler:
-            self._toast_handler(eventargs.arguments, 
-                ({} if not eventargs.user_input else {
-                    x : IPropertyValue._from(y).get_string() for x, y in eventargs.user_input.items()
-                }), -1
-            )
+            self._toast_handler(self._toast_result)
 
 
     def _handle_toast_dismissed(self, toast : ToastNotification, args : ToastDismissedEventArgs):
+        result = ToastResult(arguments = "", inputs = {}, show_data = dict(toast.data.values.items()), dismiss_reason = args.reason.value)
+        self._toast_result = result
         if self._toast_handler:
-            self._toast_handler("", {}, args.reason.value)
+            self._toast_handler(self._toast_result)
 
 
     def _handle_toast_failed(self, toast : ToastNotification, args : ToastFailedEventArgs):
@@ -384,18 +382,11 @@ class Toast(ToastElementContainer):
         data : Optional[Dict[str, str]] = None
     ):
         # For convenience, allow muting the sound without setting "toast.sound = None".
-        self._mute_sound_override = mute_sound
         self._manager = ToastNotificationManager.create_toast_notifier(sys.executable)
         event_loop = asyncio.get_running_loop()
-        self._called_by_show = True
-        xmldata = self.to_xml()
-        xml = dom.XmlDocument()
-        xml.load_xml(xmldata)
-        self._toast = ToastNotification(xml)
+        self._toast = ToastNotification(self._to_xml_document(mute_sound))
         if data:
-            self._toast.data = NotificationData()
-            for k, v in data.items():
-                self._toast.data.values[k] = str(v)
+            self._toast.data = self._build_notification_data(data)
         if self.group_id:
             self._toast.group = self.group_id
         if self.toast_id:
@@ -449,32 +440,37 @@ class Toast(ToastElementContainer):
         # then we are sure that toast never displayed before.
         if (not self._toast) or (not self._manager):
             return
+        winsound.PlaySound(None, 4)
         self._manager.hide(self._toast)
 
 
     def update(
         self,
-        data : Dict[str, str]
-    ) -> None:
-        notifdata = NotificationData()
-        for k, v in data.items():
-            notifdata.values[k] = str(v)
+        data : Dict[str, str],
+        silent : bool = False
+    ) -> int:
+        notifdata = self._build_notification_data(data)
         update_result = None
         if self.toast_id == None:
             raise ValueError("Toast must have an ID to use update() function.")
         if self.group_id:
-            update_result = self._manager.update(notifdata, self.toast_id, self.group_id)
+            update_result = self._manager.update(notifdata, self.toast_id, self.group_id).value
         else:
-            update_result = self._manager.update(notifdata, self.toast_id)
-        if update_result != NotificationUpdateResult.SUCCEEDED:
-            raise ValueError("Failed to update notification: " + update_result.name)
+            update_result = self._manager.update(notifdata, self.toast_id).value
+        if update_result != 0:
+            if not silent:
+                raise Exception("Failed to update the notification;", (
+                    "notification has not found." if update_result == 2 else
+                    "unknown error."
+                ))
+        return update_result
 
 
     async def show(
         self,
         mute_sound : bool = False,
         data : Optional[Dict[str, str]] = None
-    ) -> None:
+    ) -> ToastResult:
         event_loop, f1, f2, f3, t1, t2, t3 = self._init_toast(mute_sound, data)
         tokens = {"1": t1, "2": t2, "3": t3}
         self._manager.show(self._toast)
@@ -482,10 +478,20 @@ class Toast(ToastElementContainer):
         event_loop.call_soon_threadsafe(
             future.set_result, self._handle_toast_shown(data)
         )
+        # If sound is custom, use winsound.
+        if not (self.sound or "ms-winsoundevent:").startswith("ms-winsoundevent:"):
+            if mute_sound:
+                winsound.PlaySound(None, 4)
+            else:
+                winsound.PlaySound(
+                    self.sound, winsound.SND_FILENAME + winsound.SND_NODEFAULT + winsound.SND_ASYNC + \
+                    (winsound.SND_LOOP if self.sound_loop else 0)
+                )
         try:
             _, pending = await asyncio.wait([f1, f2, f3], return_when = asyncio.FIRST_COMPLETED)
             for p in pending:
                 p.cancel()
+            return self._toast_result
         finally:
             if (t1 := tokens['1']) is not None:
                 self._toast.remove_activated(t1)

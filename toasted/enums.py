@@ -43,7 +43,7 @@ class ToastNotificationMode(Enum):
 
 
 # https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-audio#attributes
-class ToastSound(Enum):
+class ToastSound:
     DEFAULT  = "ms-winsoundevent:Notification.Default"
     IM       = "ms-winsoundevent:Notification.IM"
     MAIL     = "ms-winsoundevent:Notification.Mail"

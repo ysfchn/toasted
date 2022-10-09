@@ -10,7 +10,7 @@ __all__ = [
     "Subgroup"
 ]
 
-from toasted.common import ToastElement, xml, get_enum, ToastElementContainer
+from toasted.common import ToastElement, xml, get_enum, ToastElementContainer, ToastGenericContainer
 from toasted.enums import (
     ToastElementType, 
     ToastTextAlign, 
@@ -18,7 +18,7 @@ from toasted.enums import (
     ToastButtonStyle, 
     ToastImagePlacement
 )
-from typing import Optional, Dict, Any, List, Type, Union
+from typing import Optional, Dict, Any, List, Tuple, Type, Union
 
 class Text(ToastElement):
     """
@@ -144,6 +144,10 @@ class Image(ToastElement):
         x.placement = get_enum(ToastImagePlacement, data.get("placement", None))
         return x
 
+    def _list_remote_images(self) -> Optional[List[Tuple[str, str]]]:
+        if self.source.startswith("http"):
+            return [(self.source, "src")]
+
     def to_xml(self) -> str:
         return xml(
             "image", 
@@ -220,7 +224,7 @@ class Button(ToastElement):
         input_id:
             Set to the ID of an input to position button beside the input.
         style:
-            The button style. "use_button_style" must be set to True in the toast element. 
+            The button style.
         tooltip:
             The tooltip for a button, if the button has an empty content string.
     """
@@ -251,6 +255,11 @@ class Button(ToastElement):
         x.style = get_enum(ToastButtonStyle, data.get("style", None))
         return x
 
+    def _list_remote_images(self) -> Optional[List[Tuple[str, str]]]:
+        if self.icon and self.icon.startswith("http"):
+            return [(self.icon, "imageUri")]
+
+
     def to_xml(self) -> str:
         return xml(
             "action", 
@@ -262,7 +271,7 @@ class Button(ToastElement):
             hint_inputId = self.input_id,
             hint_buttonStyle = self.style,
             hint_toolTip = self.tooltip
-            # Unsupported keywords:
+            # Unsupported options:
             # - protocolActivationTargetApplicationPfn
             # - afterActivationBehavior = "pendingUpdate"
         )
@@ -411,7 +420,7 @@ class Subgroup(ToastElementContainer):
         )
 
 
-class Group(ToastElement):
+class Group(ToastGenericContainer[Subgroup], ToastElement):
     """
     Semantically identifies that the content in the group must either be displayed as a whole, 
     or not displayed if it cannot fit. Groups also allow creating multiple columns.
@@ -421,15 +430,7 @@ class Group(ToastElement):
     ELEMENT_TYPE = ToastElementType.VISUAL
 
     def __init__(self) -> None:
-        self.data : List[Subgroup] = []
-
-    def add_subgroup(self, subgroup : Subgroup) -> "Group":
-        self.data.append(subgroup)
-        return self
-
-    def remove_subgroup(self, subgroup : Subgroup) -> "Group":
-        self.data.remove(subgroup)
-        return self
+        self.data = []
 
     @staticmethod
     def from_list(data : List[List[ToastElement]]) -> "Group":
