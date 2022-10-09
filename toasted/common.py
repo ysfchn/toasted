@@ -6,7 +6,7 @@ __all__ = [
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Dict, Generic, Optional, Any, Tuple, Type, List, Iterable, TypeVar
+from typing import Dict, Generic, Optional, Any, Tuple, Type, List, Iterable, TypeVar, Union
 from toasted.enums import ToastElementType
 
 T = TypeVar('T')
@@ -27,7 +27,7 @@ def xml(element : str, _data : Optional[str] = None, **kwargs) -> str:
     return "<" + element + attr + ">" + (_data or "") + "</" + element + ">"
 
 
-def get_enum(enum : Type[Enum], value : Any, default : Any = None) -> Optional[Enum]:
+def get_enum(enum : Type[Enum], value : Any, default : Any = None) -> Union[Enum, None, Any]:
     return next((y for x, y in enum._member_map_.items() if y.value == value or y == value or x == value), default)
 
 

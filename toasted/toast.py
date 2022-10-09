@@ -247,7 +247,9 @@ class Toast(ToastElementContainer):
         # Add notification sound properties
         output[2] += xml(
             "audio", 
-            src = self.sound,
+            # If custom sound has provided, set the original toast sound to None 
+            # since we use our own sound solution.
+            src = self.sound if (self.sound or "ms-winsoundevent:").startswith("ms-winsoundevent:") else None,
             silent = self._mute_sound_override or (self.sound == None),
             loop = self.sound_loop
         )
@@ -308,13 +310,20 @@ class Toast(ToastElementContainer):
 
 
     def _handle_toast_dismissed(self, toast : ToastNotification, args : ToastDismissedEventArgs):
-        result = ToastResult(arguments = "", inputs = {}, show_data = dict(toast.data.values.items()), dismiss_reason = args.reason.value)
+        winsound.PlaySound(None, 4)
+        result = ToastResult(
+            arguments = "", 
+            inputs = {}, 
+            show_data = dict(toast.data.values.items()), 
+            dismiss_reason = 0 if not args.reason else args.reason.value
+        )
         self._toast_result = result
         if self._toast_handler:
             self._toast_handler(self._toast_result)
 
 
     def _handle_toast_failed(self, toast : ToastNotification, args : ToastFailedEventArgs):
+        winsound.PlaySound(None, 4)
         raise RuntimeError("Toast failed with error code:", args.error_code.value)
 
 
@@ -440,7 +449,6 @@ class Toast(ToastElementContainer):
         # then we are sure that toast never displayed before.
         if (not self._toast) or (not self._manager):
             return
-        winsound.PlaySound(None, 4)
         self._manager.hide(self._toast)
 
 
