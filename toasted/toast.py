@@ -301,7 +301,7 @@ class Toast(ToastElementContainer):
             inputs = ({} if not eventargs.user_input else {
                 x : IPropertyValue._from(y).get_string() for x, y in eventargs.user_input.items()
             }),
-            show_data = dict(toast.data.values.items()),
+            show_data = {} if not toast.data else dict(toast.data.values.items()),
             dismiss_reason = -1
         )
         self._toast_result = result
@@ -313,9 +313,9 @@ class Toast(ToastElementContainer):
         winsound.PlaySound(None, 4)
         result = ToastResult(
             arguments = "", 
-            inputs = {}, 
-            show_data = dict(toast.data.values.items()), 
-            dismiss_reason = 0 if not args.reason else args.reason.value
+            inputs = {},
+            show_data = {} if not toast.data else dict(toast.data.values.items()), 
+            dismiss_reason = args.reason.value
         )
         self._toast_result = result
         if self._toast_handler:
