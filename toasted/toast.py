@@ -4,6 +4,7 @@ from toasted.common import ToastElementContainer, ToastElement, get_enum, xml, T
 from toasted.enums import ToastDuration, ToastScenario, ToastSound, ToastElementType, ToastNotificationMode
 from toasted.elements import _create_element
 import asyncio
+import re
 from ctypes import windll
 from datetime import datetime
 import sys
@@ -214,8 +215,8 @@ class Toast(ToastElementContainer):
 
 
     def to_xml(self) -> str:
-        # Cleanup old cached images.
-        self._cleanup_images()
+        # Cleanup old cached media.
+        self._cleanup_media()
         output = ["", "", ""]
         # 1st - Visual
         # 2nd - Action
@@ -229,7 +230,7 @@ class Toast(ToastElementContainer):
             # with the cached image's file path by editing the output XML.
             if self.remote_images and self._called_by_show:
                 for src_val, src_key in (element._list_remote_images() or []):
-                    new_val = self._download_image(src_val, self.add_query_params) or ""
+                    new_val = self._download_media(src_val, self.add_query_params) or ""
                     el = el.replace(
                         src_key + "=\"" + src_val + "\"", 
                         src_key + "=\"" + new_val + "\""
@@ -344,8 +345,8 @@ class Toast(ToastElementContainer):
         }
 
 
-    def _download_image(self, remote : str, add_query_params : bool = False) -> Optional[str]:
-        # Only allow images smaller than or equal to 3 MB.
+    def _download_media(self, remote : str, add_query_params : bool = False) -> Optional[str]:
+        # Only allow media smaller than or equal to 3 MB.
         # https://docs.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast?tabs=uwp#adding-images
         with httpx.stream(
             "GET", remote, 
@@ -355,7 +356,8 @@ class Toast(ToastElementContainer):
         ) as stream:
             if not stream.is_success:
                 return
-            file = NamedTemporaryFile("w+b", suffix = ".png")
+            filename = re.findall("filename=\"(.*)\"", stream.headers.get("Content-Disposition", ""))
+            file = NamedTemporaryFile("w+b", suffix = None if not filename else "." + str(filename[0]).split(".", maxsplit = 1)[-1])
             for i in stream.iter_bytes(1024 * 10):
                 file.write(i)
             file.flush()
@@ -363,7 +365,7 @@ class Toast(ToastElementContainer):
             return "file:///" + file.name
 
 
-    def _cleanup_images(self):
+    def _cleanup_media(self):
         for i in self._temp_files:
             i.close()
             self._temp_files.remove(i)
@@ -491,8 +493,12 @@ class Toast(ToastElementContainer):
             if mute_sound:
                 winsound.PlaySound(None, 4)
             else:
+                current_sound = None
+                # If sound is from remote, cache it.
+                if self.sound.startswith("http"):
+                    current_sound = self._download_media(self.sound, False)
                 winsound.PlaySound(
-                    self.sound, winsound.SND_FILENAME + winsound.SND_NODEFAULT + winsound.SND_ASYNC + \
+                    current_sound or self.sound, winsound.SND_FILENAME + winsound.SND_NODEFAULT + winsound.SND_ASYNC + \
                     (winsound.SND_LOOP if self.sound_loop else 0)
                 )
         try:
