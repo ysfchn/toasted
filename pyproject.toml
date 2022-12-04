@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "toasted"
-version = "0.1.0"
+version = "0.2.0"
 description = "Toast notifications library for Windows, built on top of WinRT."
 authors = ["ysfchn <54748183+ysfchn@users.noreply.github.com>"]
 license = "MIT"
