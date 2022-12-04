@@ -47,6 +47,9 @@ asyncio.run(mytoast.show())
 * **Remote (HTTP) images support**
     <br>Normally, Windows restricts the use of HTTP images and only allows local file paths on non-UWP applications. But to overcome the limitation, Toasted downloads HTTP images to %TEMP%, so you can now use images from web without any configuration! Downloaded images are deleted once toast has dismissed / clicked. Also, to comply with Windows API, you can enable sending system information (such as `ms-lang`, `ms-theme`, `ms-contrast`) to remote sources as query parameters by setting `add_query_params` property.
 
+* **Custom application icon and name**
+    Toasted can add a registry key to system (requires administrator permissions for one-time), so you can set a custom application name and icon for your notification.
+
 * **Custom sounds**
     <br>If an custom sound has provided, toast's own sound will be muted and Python's `winsound` module will be used instead. Also, sounds from HTTP sources are supported too.
 
@@ -55,7 +58,3 @@ asyncio.run(mytoast.show())
 
 * **Import from JSON**
     <br>Notification elements and their properties can be imported with dictionaries (JSON-accepted types) with `Toast.from_json()`, so you can add more than one element by calling a single method. See example JSON configurations [here.](examples)
-    
-## Notes
-
-* As you can see from screenshot, it is not possible to change "Python" title in normal ways, since Windows requires a "source application" to show notifications from. However, [Toast collections](https://docs.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/toast-collections) allows to override app icon, but I'm not sure how I can implement this (or even, is it possible for a non-UWP app?), so still working on it.

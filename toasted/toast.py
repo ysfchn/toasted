@@ -30,6 +30,8 @@ from winsdk._winrt import Object
 from winsdk.windows.foundation import IPropertyValue, EventRegistrationToken
 from winsdk.windows.ui.viewmanagement import AccessibilitySettings, UISettings, UIColorType
 import winsdk.windows.data.xml.dom as dom
+import winreg
+from uuid import uuid4
 
 
 class Toast(ToastElementContainer):
@@ -385,6 +387,22 @@ class Toast(ToastElementContainer):
                 pass
         self._temp_files.clear()
 
+    
+    @staticmethod
+    def register_app_id(handle : str = "Toasted.Notification.Test", display_name : str = "My App"):
+        # https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast-other-apps
+        key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
+        winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_EXPAND_SZ, display_name)
+        winreg.SetValueEx(key, "IconBackgroundColor", 0, winreg.REG_SZ, "0")
+        winreg.SetValueEx(key, "IconUri", 0, winreg.REG_SZ, "ms-resource://Windows.ParentalControlsSettings/Files/Images/MicrosoftFamily.png")
+        winreg.SetValueEx(key, "CustomActivator", 0, winreg.REG_SZ, "{" + str(uuid4()).upper() + "}")
+        winreg.SetValueEx(key, "ShowInSettings", 0, winreg.REG_DWORD, 0)
+
+
+    @staticmethod
+    def unregister_app_id(handle : str = "Toasted.Notification.Test"):
+        winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
+
 
     def _create_handler_future(
         self,
@@ -517,7 +535,8 @@ class Toast(ToastElementContainer):
                 winsound.PlaySound(None, 4)
             else:
                 winsound.PlaySound(
-                    Path(custom_sound).resolve().as_posix(), winsound.SND_FILENAME + winsound.SND_NODEFAULT + winsound.SND_ASYNC + \
+                    Path(custom_sound).resolve().as_posix(), 
+                    winsound.SND_FILENAME + winsound.SND_NODEFAULT + winsound.SND_ASYNC + \
                     (winsound.SND_LOOP if self.sound_loop else 0)
                 )
         # Execute show handler.
