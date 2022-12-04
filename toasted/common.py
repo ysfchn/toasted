@@ -1,12 +1,13 @@
 __all__ = [
     "xml",
     "get_enum",
+    "resolve_value",
     "ToastResult"
 ]
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Dict, Generic, Optional, Any, Tuple, Type, List, Iterable, TypeVar, Union
+from typing import get_args, Dict, Generic, Literal, Optional, Any, Tuple, Type, List, Iterable, TypeVar, Union
 from toasted.enums import ToastElementType
 
 T = TypeVar('T')
@@ -23,21 +24,36 @@ def xml(element : str, _data : Optional[str] = None, **kwargs) -> str:
             value = str(v.value)
         else:
             value = str(v)
-        attr += " " + k.replace("_", "-") + "=\"" + value + "\""
+        attr += " " + k.replace("_", "-") + "=\"" + value.replace("\"", "&quot;") + "\""
     return "<" + element + attr + ">" + (_data or "") + "</" + element + ">"
 
 
-def get_enum(enum : Type[Enum], value : Any, default : Any = None) -> Union[Enum, None, Any]:
-    return next((y for x, y in enum._member_map_.items() if y.value == value or y == value or x == value), default)
+def get_enum(enum : Type[Enum], value : Any, default : T = None) -> Union[Enum, T]:
+    return next((y for x, y in enum._member_map_.items() if (y.value == value) or (y == value) or (x == value)), default)
+
+
+def resolve_value(val : str, is_media : bool = False) -> Tuple[str, str, Optional[str]]:
+    # Binding values
+    if str(val).startswith("{") and str(val).startswith("}"):
+        return "BINDING", val, str(val)[1:-1],
+    elif is_media:
+        # Remote
+        if str(val).startswith("http://") or str(val).startswith("https://"):
+            return "REMOTE", val, None,
+        # Local
+        return "LOCAL", val, \
+            str(val).removeprefix("ms-appx://") \
+            .removeprefix("ms-appdata://") \
+            .removeprefix("/"),
+    return None, val, None,
 
 
 class ToastBase(ABC):
+    __slots__ = ()
+
     @abstractmethod
     def to_xml(self) -> str:
         ...
-
-    def _list_remote_images(self) -> Optional[List[Tuple[str, str]]]:
-        return
     
     @classmethod
     def from_json(cls, data : Dict[str, Any]):
@@ -66,10 +82,48 @@ class ToastResult:
 
 
 class ToastElement(ToastBase):
-    ELEMENT_TYPE : ToastElementType
+    _registry : Dict[str, "ToastElement"] = []
+    _etype : ToastElementType
+
+    def __init_subclass__(cls, ename : str, etype : ToastElementType, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        cls._etype = etype
+        cls._registry.append((ename, cls,))
+
+    @classmethod
+    def _create_from_type(cls, _type : str, **kwargs) -> "ToastElement":
+        for x, y in cls._registry.items():
+            if x == _type:
+                return y.from_json(kwargs)
+        raise ValueError(
+            "Subgroups can't be created from root level, use \"group\" with children instead." \
+            if _type == "subgroup" else f"Element couldn't found with name \"{_type}\"."
+        )
+
+    def _resolve(self) -> List[Tuple[str, Optional[str], str, str]]:
+        # Toast elements produce a XML, however the output XML attribute names are not same
+        # with the class __init__ parameter names, so there is an annotation for elements
+        # in their definitions. We need to do that to support HTTP images, because when source is 
+        # an HTTP image, we are replacing the output XML to point to the downloaded file.
+        #
+        # class Image(ToastElement):
+        #     source : Literal["src"] <--- "source" is attribute name
+        #                                  "src" is name of the attribute in output XML
+        x = []
+        for slot in self.__slots__:
+            ann : Optional[Literal] = self.__annotations__.get(slot, None)
+            _type, _old, _new = resolve_value(getattr(self, slot), is_media = slot in self.__annotations__)
+            if _type:
+                x.append((_type, None if not ann else get_args(ann)[0], _old, _new or _old, ))
+        return x
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__}>"
 
 
 class ToastGenericContainer(Generic[T], ToastBase):
+    __slots__ = ("data", )
+
     def __init__(self) -> None:
         self.data : List[T] = []
 

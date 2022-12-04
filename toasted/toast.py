@@ -3,7 +3,6 @@ __all__ = ["Toast"]
 import os
 from toasted.common import ToastElementContainer, ToastElement, get_enum, xml, ToastResult
 from toasted.enums import ToastDuration, ToastScenario, ToastSound, ToastElementType, ToastNotificationMode
-from toasted.elements import _create_element
 import asyncio
 import re
 from ctypes import windll
@@ -15,7 +14,7 @@ import sys
 from tempfile import NamedTemporaryFile
 import httpx
 import winsound
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from pathlib import Path
 from winsdk.windows.ui.notifications import (
     ToastNotification, 
@@ -190,7 +189,7 @@ class Toast(ToastElementContainer):
             source_app_id = str(json.get("group_id", "")) or sys.executable
         )
         for el in json["elements"]:
-            toast.append(_create_element(el))
+            toast.append(ToastElement._create_from_type(**el))
         return toast
 
 
@@ -243,20 +242,18 @@ class Toast(ToastElementContainer):
             # Download remote images to disk, and replace the URL
             # with the cached image's file path by editing the output XML.
             if self.remote_images and self._called_by_show:
-                for src_val, src_key in (element._list_remote_images() or []):
-                    new_val = "file:///" + Path(self._download_media(src_val, self.add_query_params) or "").resolve().as_posix()
-                    el = el.replace(
-                        src_key + "=\"" + src_val + "\"", 
-                        src_key + "=\"" + new_val + "\""
-                    )
+                for r_type, r_key, r_value, _ in element._resolve():
+                    if r_type == "REMOTE":
+                        temp_file = "file:///" + Path(self._download_media(r_value, self.add_query_params) or "").resolve().as_posix()
+                        el = el.replace(r_key + "=\"" + r_value + "\"", r_key + "=\"" + temp_file + "\"")
             # Enable custom styles on the toast
             # if button has a custom style.
             if "hint-buttonStyle=\"" in el:
                 using_custom_style = True
             # Append output XML to list.
             output[
-                0 if element.ELEMENT_TYPE == ToastElementType.VISUAL else
-                1 if element.ELEMENT_TYPE == ToastElementType.ACTION else
+                0 if element._etype == ToastElementType.VISUAL else
+                1 if element._etype == ToastElementType.ACTION else
                 2
             ] += el
         # Add notification sound properties
