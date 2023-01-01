@@ -58,3 +58,13 @@ asyncio.run(mytoast.show())
 
 * **Import from JSON**
     <br>Notification elements and their properties can be imported with dictionaries (JSON-accepted types) with `Toast.from_json()`, so you can add more than one element by calling a single method. See example JSON configurations [here.](examples)
+
+## Building
+
+```
+python -m pip wheel .
+```
+
+## License
+
+Source code is licensed under MIT license. You must include the license notice in all copies or substantial uses of the work.

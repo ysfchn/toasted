@@ -4,89 +4,89 @@
     "group_id": "mygroup",
     "elements": [
         {
-            "@type": "text",
+            "_type": "text",
             "content": "First added line becomes bold"
         },
         {
-            "@type": "text",
+            "_type": "text",
             "content": "Up to 3 lines can be added"
         },
         {
-            "@type": "text",
+            "_type": "text",
             "content": "However, you can add more text with groups"
         },
         {
-            "@type": "group",
+            "_type": "group",
             "elements": [
                 [
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "H1",
                         "style": "HEADER"
                     },
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "H2",
                         "style": "SUBHEADER"
                     },
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "H3",
                         "style": "TITLE"
                     },
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "H4",
                         "style": "SUBTITLE"
                     },
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "H5",
                         "style": "BASE"
                     },
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "H6",
                         "style": "BODY"
                     },
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "Body"
                     }
                 ],
                 [
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "H1",
                         "style": "HEADERSUBTLE"
                     },
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "H2",
                         "style": "SUBHEADERSUBTLE"
                     },
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "H3",
                         "style": "TITLESUBTLE"
                     },
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "H4",
                         "style": "SUBTITLESUBTLE"
                     },
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "H5",
                         "style": "BASESUBTLE"
                     },
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "H6",
                         "style": "BODYSUBTLE"
                     },
                     {
-                        "@type": "text",
+                        "_type": "text",
                         "content": "Body",
                         "style": "CAPTIONSUBTLE"
                     }
