@@ -49,7 +49,7 @@ def resolve_value(val : str, is_media : bool = False) -> Tuple[str, str, Optiona
     return None, val, None,
 
 
-def get_windows_version() -> Tuple[int, float]:
+def get_windows_version() -> Tuple[float, int]:
     ver = platform.version()
     if not ver.replace(".", "").isnumeric():
         raise ValueError(f"Invalid Windows version: {ver}")

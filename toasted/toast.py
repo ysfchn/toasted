@@ -31,7 +31,7 @@ from winsdk.windows.foundation import IPropertyValue, EventRegistrationToken
 from winsdk.windows.ui.viewmanagement import AccessibilitySettings, UISettings, UIColorType
 import winsdk.windows.data.xml.dom as dom
 import winreg
-from uuid import uuid4
+from uuid import uuid4, UUID
 
 
 class Toast(ToastElementContainer):
@@ -389,18 +389,44 @@ class Toast(ToastElementContainer):
 
     
     @staticmethod
-    def register_app_id(handle : str = "Toasted.Notification.Test", display_name : str = "My App"):
+    def register_app_id(
+        handle : str, 
+        display_name : Optional[str] = None,
+        icon_background_color : Optional[str] = None,
+        icon_uri : Optional[str] = None,
+        show_in_settings : bool = True
+    ) -> str:
+        """
+        Registers an app ID in Windows Registry to use a custom icon and name for notifications.
+        Returns the given handle.
+
+        Parameters:
+            handle:
+                A unique AUMID that identifies the app. Example: "Toasted.Notification.Test"
+            display_name:
+                A display name for application. Shows as title in notification. If not provided, same as handle.
+            icon_background_color:
+                Background color of icon in ARGB hex format. Default is #00000000.
+            icon_uri:
+                URI or file path of application icon. Shows up as icon in notification.
+            show_in_settings:
+                True (default) to show this application in notification settings.
+        """
         # https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast-other-apps
         key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
-        winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_EXPAND_SZ, display_name)
-        winreg.SetValueEx(key, "IconBackgroundColor", 0, winreg.REG_SZ, "0")
-        winreg.SetValueEx(key, "IconUri", 0, winreg.REG_SZ, "ms-resource://Windows.ParentalControlsSettings/Files/Images/MicrosoftFamily.png")
+        winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_EXPAND_SZ, display_name or handle)
+        winreg.SetValueEx(key, "IconBackgroundColor", 0, winreg.REG_SZ, (icon_background_color or "#00000000").replace("#", ""))
+        winreg.SetValueEx(key, "IconUri", 0, winreg.REG_SZ, icon_uri)
         winreg.SetValueEx(key, "CustomActivator", 0, winreg.REG_SZ, "{" + str(uuid4()).upper() + "}")
-        winreg.SetValueEx(key, "ShowInSettings", 0, winreg.REG_DWORD, 0)
+        winreg.SetValueEx(key, "ShowInSettings", 0, winreg.REG_DWORD, int(show_in_settings))
+        return handle
 
 
     @staticmethod
-    def unregister_app_id(handle : str = "Toasted.Notification.Test"):
+    def unregister_app_id(handle : str):
+        """
+        Unregisters an app ID in Windows Registry.
+        """
         winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
 
 
