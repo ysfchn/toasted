@@ -183,7 +183,7 @@ class Progress(ToastElement, etype = ToastElementType.VISUAL, ename = "progress"
     Args:
         value:
             The value of the progress bar. This value either be a float between 0 and 1 (inclusive)
-            or "indeterminate", which results in a loading animation.
+            or -1 (indeterminate), which results in a loading animation.
         status:
             A status string that is displayed underneath the progress bar on the left. 
             This string should reflect the status of the operation, like "Downloading..." or "Installing..."
@@ -211,7 +211,7 @@ class Progress(ToastElement, etype = ToastElementType.VISUAL, ename = "progress"
         return xml(
             "progress", 
             title = self.title,
-            value = self.value,
+            value = "indeterminate" if (self.value == -1) else self.value,
             status = self.status or " ",
             valueStringOverride = self.display_value
         )

@@ -65,7 +65,7 @@ mytoast = Toast(source_app_id = "MyOrg.MyDomain.MyPhone")
 ...
 ```
 
-![](.github/assets/custom_icon_name.png)
+<img src=".github/assets/custom_icon_name.png" width="350">
 
 Since applications are registered in Windows Registry, this will leave traces in system even after Python is no longer running. You can unregister the application by `unregister_app_id()` method.
 

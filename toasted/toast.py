@@ -24,6 +24,7 @@ __all__ = ["Toast"]
 
 import os
 from contextlib import closing
+from collections.abc import Iterator as CollectionsIterator
 from toasted.common import ToastElementContainer, ToastElement, get_enum, xml, ToastResult, get_windows_version
 from toasted.enums import ToastDuration, ToastScenario, ToastSound, ToastElementType, ToastNotificationMode
 import asyncio
@@ -36,7 +37,7 @@ import inspect
 import sys
 from tempfile import NamedTemporaryFile
 import winsound
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 from pathlib import Path
 import winreg
 from uuid import uuid4
@@ -427,13 +428,31 @@ class Toast(ToastElementContainer):
         ) as stream:
             if not stream.is_success:
                 return
-            filename = str(uuid4()).replace("-", "")
-            filesystem = self._create_temp_filesystem()
-            with closing(filesystem.open(filename, mode="wb")) as file:
-                for i in stream.iter_bytes(1024 * 10):
+            return self.import_media(stream.iter_bytes(1024 * 10))
+
+
+    def import_media(self, data : Union[bytes, Iterator[bytes]]) -> str:
+        """
+        Creates a temporary file on filesystem with given bytes to use as an image/sound source.
+        In other terms, instead of providing a local file path or a HTTP source to images/sounds,
+        you can provide a bytes object directly using this method. The return value is the created
+        path of the temporary file.
+
+        Parameters:
+            A bytes object or an iterator of bytes.
+        """
+        is_iterator = isinstance(data, CollectionsIterator)
+        filename = str(uuid4()).replace("-", "")
+        filesystem = self._create_temp_filesystem()
+        with closing(filesystem.open(filename, mode="wb")) as file:
+            if is_iterator:
+                for i in data:
                     file.write(i)
-            return filesystem.getsyspath("/" + filename)
-    
+            else:
+                file.write(data)
+        return filesystem.getsyspath("/" + filename)
+
+
     @staticmethod
     def register_app_id(
         handle : str, 
@@ -473,7 +492,7 @@ class Toast(ToastElementContainer):
         """
         Unregisters an app ID in Windows Registry.
         """
-        winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
 
 
     def _create_handler_future(
@@ -553,7 +572,8 @@ class Toast(ToastElementContainer):
 
 
     def toasts_enabled(self) -> bool:
-        self._init()
+        if not self._manager:
+            self._manager = ToastNotificationManager.create_toast_notifier(self.source_app_id)
         return self._manager.setting == NotificationSetting.ENABLED
 
 
@@ -571,7 +591,20 @@ class Toast(ToastElementContainer):
         self,
         data : Dict[str, str],
         silent : bool = False
-    ) -> int:
+    ) -> bool:
+        """
+        Updates the notification without showing a new one. Used for changing dynamic
+        values (a.k.a. binding values). You won't need that if you don't use any binding
+        values. Returns True if succeded (always True if silent is False).
+
+        Parameters:
+            data:
+                Dictionary of binding keys and their values to replace with.
+                See also show() method to set initial values of binding keys before showing the toast.
+            silent:
+                If True, no exceptions will be raised when notification was not found 
+                (user has deleted the notification). Defaults to False.
+        """
         notifdata = self._build_notification_data(data)
         update_result = None
         if self.toast_id == None:
@@ -586,7 +619,7 @@ class Toast(ToastElementContainer):
                     "notification has not found." if update_result == 2 else
                     "unknown error."
                 ))
-        return update_result
+        return update_result == 0
 
 
     async def show(
@@ -594,6 +627,20 @@ class Toast(ToastElementContainer):
         data : Optional[Dict[str, str]] = None,
         mute_sound : bool = False
     ) -> ToastResult:
+        """
+        Shows the notification. If there is any {binding} key, you can give a "data" 
+        dictionary to replace binding keys with their values. You can also "mute_sound" 
+        to mute notification sound regardless of "sound" attribute of this toast. 
+
+        Parameters:
+            data:
+                Dictionary of binding keys and their initial values to replace with.
+                See also update() method to update binding keys after showing the toast.
+            mute_sound:
+                Mute the sound of this notification, if set any. Can be useful if you want to
+                show same toast but want to mute sound to prevent repetitive notification
+                sounds without needing to change Toast.sound attribute.
+        """
         event_loop, f1, f2, f3, t1, t2, t3, custom_sound = self._init_toast(mute_sound, data)
         tokens = {"1": t1, "2": t2, "3": t3}
         self._manager.show(self._toast)
