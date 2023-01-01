@@ -1,6 +1,29 @@
+# MIT License
+# 
+# Copyright (c) 2022 ysfchn
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 __all__ = ["Toast"]
 
 import os
+from contextlib import closing
 from toasted.common import ToastElementContainer, ToastElement, get_enum, xml, ToastResult, get_windows_version
 from toasted.enums import ToastDuration, ToastScenario, ToastSound, ToastElementType, ToastNotificationMode
 import asyncio
@@ -12,10 +35,12 @@ import mimetypes
 import inspect
 import sys
 from tempfile import NamedTemporaryFile
-import httpx
 import winsound
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from pathlib import Path
+import winreg
+from uuid import uuid4
+import httpx
 from winsdk.windows.ui.notifications import (
     ToastNotification, 
     ToastNotificationManager, 
@@ -30,8 +55,7 @@ from winsdk._winrt import Object
 from winsdk.windows.foundation import IPropertyValue, EventRegistrationToken
 from winsdk.windows.ui.viewmanagement import AccessibilitySettings, UISettings, UIColorType
 import winsdk.windows.data.xml.dom as dom
-import winreg
-from uuid import uuid4, UUID
+from fs.tempfs import TempFS
 
 
 class Toast(ToastElementContainer):
@@ -106,6 +130,31 @@ class Toast(ToastElementContainer):
             Defaults to executable path of the Python (sys.executable).
     """
 
+    __slots__ = (
+        "duration",
+        "arguments",
+        "scenario",
+        "timestamp",
+        "show_popup",
+        "base_path",
+        "sound",
+        "sound_loop",
+        "remote_images",
+        "add_query_params",
+        "expiration_time",
+        "group_id",
+        "toast_id",
+        "source_app_id",
+        "_toast_handler",
+        "_show_handler",
+        "_manager",
+        "_toast",
+        "_xml_mute_sound",
+        "_xml_resolve_http",
+        "_toast_result",
+        "_temp_filesystem"
+    )
+
     def __init__(
         self, 
         arguments : Optional[str] = None,
@@ -142,10 +191,10 @@ class Toast(ToastElementContainer):
         self._show_handler : Optional[Callable] = None
         self._manager : ToastNotifier = None
         self._toast : ToastNotification = None
-        self._mute_sound_override : bool = False
-        self._temp_files : List[Any] = []
-        self._called_by_show : bool = False
+        self._xml_mute_sound : bool = False
+        self._xml_resolve_http : bool = False
         self._toast_result : Optional[ToastResult] = None
+        self._temp_filesystem : Optional[TempFS] = None
 
 
     def __copy__(self) -> "Toast":
@@ -165,7 +214,6 @@ class Toast(ToastElementContainer):
             expiration_time = self.expiration_time,
             source_app_id = self.source_app_id
         )
-        x._mute_sound_override = self._mute_sound_override
         x._toast_handler = self._toast_handler
         x._show_handler = self._show_handler
         x.data = self.data
@@ -231,7 +279,7 @@ class Toast(ToastElementContainer):
 
     def to_xml(self) -> str:
         # Cleanup old cached media.
-        self._cleanup_media()
+        self._close_temp_filesystem()
         output = ["", "", ""]
         # 1st - Visual
         # 2nd - Action
@@ -243,7 +291,7 @@ class Toast(ToastElementContainer):
             el = element.to_xml()
             # Download remote images to disk, and replace the URL
             # with the cached image's file path by editing the output XML.
-            if self.remote_images and self._called_by_show:
+            if self.remote_images and self._xml_resolve_http:
                 for r_type, r_key, r_value, _ in element._resolve():
                     if r_type == "REMOTE":
                         temp_file = "file:///" + Path(self._download_media(r_value, self.add_query_params) or "").resolve().as_posix()
@@ -264,10 +312,10 @@ class Toast(ToastElementContainer):
             src = self.sound if (self.sound or "ms-winsoundevent:").startswith("ms-winsoundevent:") else None,
             # If custom sound has provided, mute the original toast sound to None 
             # since we use our own sound solution.
-            silent = self._mute_sound_override or (self.sound == None) or (not (self.sound or "ms-winsoundevent:").startswith("ms-winsoundevent:")),
+            silent = self._xml_mute_sound or (self.sound == None) or (not (self.sound or "ms-winsoundevent:").startswith("ms-winsoundevent:")),
             loop = self.sound_loop
         )
-        self._called_by_show = False
+        self._xml_resolve_http = False
         # Build toast XML document
         return xml(
             "toast",
@@ -293,8 +341,8 @@ class Toast(ToastElementContainer):
 
 
     def _to_xml_document(self, mute_sound : bool) -> dom.XmlDocument:
-        self._mute_sound_override = mute_sound
-        self._called_by_show = True
+        self._xml_mute_sound = mute_sound
+        self._xml_resolve_http = True
         xmldata = self.to_xml()
         xml = dom.XmlDocument()
         xml.load_xml(xmldata)
@@ -309,7 +357,7 @@ class Toast(ToastElementContainer):
 
 
     def _handle_toast_activated(self, toast : ToastNotification, args : Object):
-        self._cleanup_media()
+        self._close_temp_filesystem()
         eventargs = ToastActivatedEventArgs._from(args)
         result = ToastResult(
             arguments = eventargs.arguments,
@@ -325,7 +373,7 @@ class Toast(ToastElementContainer):
 
 
     def _handle_toast_dismissed(self, toast : ToastNotification, args : ToastDismissedEventArgs):
-        self._cleanup_media()
+        self._close_temp_filesystem()
         winsound.PlaySound(None, 4)
         result = ToastResult(
             arguments = "", 
@@ -339,7 +387,7 @@ class Toast(ToastElementContainer):
 
 
     def _handle_toast_failed(self, toast : ToastNotification, args : ToastFailedEventArgs):
-        self._cleanup_media()
+        self._close_temp_filesystem()
         winsound.PlaySound(None, 4)
         raise RuntimeError("Toast failed with error code:", args.error_code.value)
 
@@ -356,6 +404,18 @@ class Toast(ToastElementContainer):
         }
 
 
+    def _create_temp_filesystem(self) -> TempFS:
+        if self._temp_filesystem:
+            return self._temp_filesystem
+        self._temp_filesystem = TempFS()
+        return self._temp_filesystem
+
+
+    def _close_temp_filesystem(self) -> None:
+        if self._temp_filesystem:
+            self._temp_filesystem.close()
+
+
     def _download_media(self, remote : str, add_query_params : bool = False) -> Optional[str]:
         # Only allow media smaller than or equal to 3 MB.
         # https://docs.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast?tabs=uwp#adding-images
@@ -367,26 +427,12 @@ class Toast(ToastElementContainer):
         ) as stream:
             if not stream.is_success:
                 return
-            # Try to guess the file extension.
-            filename = re.findall("filename=\"(.*)\"", stream.headers.get("Content-Disposition", ""))
-            mimetype, _ = mimetypes.guess_type(remote if not filename else filename[0], False)
-            extension = mimetypes.guess_extension(mimetype, False)
-            file = NamedTemporaryFile("w+b", suffix = extension, delete = False)
-            for i in stream.iter_bytes(1024 * 10):
-                file.write(i)
-            file.close()
-            self._temp_files.append(file)
-            return file.name
-
-
-    def _cleanup_media(self):
-        for i in self._temp_files:
-            try:
-                os.remove(i.name)
-            except Exception:
-                pass
-        self._temp_files.clear()
-
+            filename = str(uuid4()).replace("-", "")
+            filesystem = self._create_temp_filesystem()
+            with closing(filesystem.open(filesystem, mode="wb")) as file:
+                for i in stream.iter_bytes(1024 * 10):
+                    file.write(i)
+            return filesystem.getsyspath("/" + filename)
     
     @staticmethod
     def register_app_id(
@@ -413,7 +459,7 @@ class Toast(ToastElementContainer):
                 True (default) to show this application in notification settings.
         """
         # https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast-other-apps
-        key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
         winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_EXPAND_SZ, display_name or handle)
         winreg.SetValueEx(key, "IconBackgroundColor", 0, winreg.REG_SZ, (icon_background_color or "#00000000").replace("#", ""))
         winreg.SetValueEx(key, "IconUri", 0, winreg.REG_SZ, icon_uri)
@@ -480,13 +526,7 @@ class Toast(ToastElementContainer):
         f1, t1 = self._create_handler_future(self._toast, event_loop, "add_activated", "_handle_toast_activated")
         f2, t2 = self._create_handler_future(self._toast, event_loop, "add_dismissed", "_handle_toast_dismissed")
         f3, t3 = self._create_handler_future(self._toast, event_loop, "add_failed", "_handle_toast_failed")
-        self._post_init_toast()
         return event_loop, f1, f2, f3, t1, t2, t3, custom_sound,
-
-
-    def _post_init_toast(self):
-        # Allow people to access the underlying ToastNotification when subclassing the Toast.
-        pass
 
 
     def history_clear(self) -> None:
@@ -522,7 +562,7 @@ class Toast(ToastElementContainer):
         # then we are sure that toast never displayed before.
         if (not self._toast) or (not self._manager):
             return
-        self._cleanup_media()
+        self._close_temp_filesystem()
         winsound.PlaySound(None, 4)
         self._manager.hide(self._toast)
 
@@ -557,6 +597,7 @@ class Toast(ToastElementContainer):
         event_loop, f1, f2, f3, t1, t2, t3, custom_sound = self._init_toast(mute_sound, data)
         tokens = {"1": t1, "2": t2, "3": t3}
         self._manager.show(self._toast)
+        self._close_temp_filesystem()
         future = event_loop.create_future()
         # If sound is custom, play with winsound.
         if custom_sound:
