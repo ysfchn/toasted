@@ -18,7 +18,7 @@ from toasted.enums import (
     ToastButtonStyle, 
     ToastImagePlacement
 )
-from typing import Literal, Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List, Union
 
 class Text(ToastElement, etype = ToastElementType.VISUAL, ename = "text"):
     """
@@ -98,7 +98,7 @@ class Text(ToastElement, etype = ToastElementType.VISUAL, ename = "text"):
         )
 
 
-class Image(ToastElement, etype = ToastElementType.VISUAL, ename = "image"):
+class Image(ToastElement, etype = ToastElementType.VISUAL, ename = "image", esources = {"source": "src"}):
     """
     Specifies an image used in the toast template.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-image
@@ -121,7 +121,6 @@ class Image(ToastElement, etype = ToastElementType.VISUAL, ename = "image"):
             If True, the image is cropped into a circle.
     """
     __slots__ = ("source", "id", "alt", "placement", "is_circle", )
-    source : Literal["src"]
 
     def __init__(
         self, 
@@ -196,7 +195,7 @@ class Progress(ToastElement, etype = ToastElementType.VISUAL, ename = "progress"
         )
 
 
-class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
+class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button", esources = {"icon": "imageUri"}):
     """
     Specifies a button shown in a toast.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-action
@@ -223,7 +222,6 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
             The tooltip for a button, if the button has an empty content string.
     """
     __slots__ = ("content", "arguments", "is_context", "icon", "input_id", "style", "tooltip", )
-    icon : Literal["imageUri"]
 
     def __init__(
         self,

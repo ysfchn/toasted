@@ -33,7 +33,7 @@ def get_enum(enum : Type[Enum], value : Any, default : T = None) -> Union[Enum, 
     return next((y for x, y in enum._member_map_.items() if (y.value == value) or (y == value) or (x == value)), default)
 
 
-def resolve_value(val : str, is_media : bool = False) -> Tuple[str, str, Optional[str]]:
+def resolve_value(val : str, is_media : bool = False) -> Tuple[Optional[str], str, Optional[str]]:
     # Binding values
     if str(val).startswith("{") and str(val).startswith("}"):
         return "BINDING", val, str(val)[1:-1],
@@ -98,11 +98,13 @@ class ToastResult:
 class ToastElement(ToastBase):
     _registry : List[Tuple[str, "ToastElement"]] = []
     _etype : ToastElementType
+    _esources : Optional[Dict[str, Any]]
 
-    def __init_subclass__(cls, ename : str, etype : ToastElementType, **kwargs) -> None:
+    def __init_subclass__(cls, ename : str, etype : ToastElementType, esources : Optional[Dict[str, Any]] = None, **kwargs) -> None:
         super().__init_subclass__(**kwargs)
         cls._etype = etype
-        cls._registry.append((ename, cls,))
+        cls._esources = esources
+        cls._registry.append((ename, cls, ))
 
     @classmethod
     def _create_from_type(cls, _type : str, **kwargs) -> "ToastElement":
@@ -114,21 +116,21 @@ class ToastElement(ToastBase):
             if _type == "subgroup" else f"Element couldn't found with name \"{_type}\"."
         )
 
-    def _resolve(self) -> List[Tuple[str, Optional[str], str, str]]:
+    def _resolve(self) -> List[Tuple[str, str, str, str]]:
         # Toast elements produce a XML, however the output XML attribute names are not same
-        # with the class __init__ parameter names, so there is an annotation for elements
+        # with the class __init__ parameter names, so there is an "esources" class parameter for elements
         # in their definitions. We need to do that to support HTTP images, because when source is 
         # an HTTP image, we are replacing the output XML to point to the downloaded file.
         #
-        # class Image(ToastElement):
-        #     source : Literal["src"] <--- "source" is attribute name
-        #                                  "src" is name of the attribute in output XML
+        # class Image(ToastElement, esources = {"source": "src"}):
+        #     ...
+        #
+        # "source" is attribute name, "src" is name of the attribute in output XML
         x = []
-        for slot in self.__slots__:
-            ann : Optional[Literal] = self.__annotations__.get(slot, None)
-            _type, _old, _new = resolve_value(getattr(self, slot), is_media = slot in self.__annotations__)
-            if _type:
-                x.append((_type, None if not ann else get_args(ann)[0], _old, _new or _old, ))
+        if self._esources:
+            for k, v in self.items():
+                c_type, c_old, c_new = resolve_value(getattr(self, k), is_media = True)
+                x.append((c_type, v or k, c_old, c_old or c_new))
         return x
 
     def __repr__(self) -> str:
