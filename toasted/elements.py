@@ -237,7 +237,7 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
     ) -> None:
         self.content = content
         self.arguments = arguments
-        self.is_content = is_context
+        self.is_context = is_context
         self.icon = icon
         self.input_id = input_id
         self.style = style
@@ -255,7 +255,7 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
             content = self.content,
             arguments = self.arguments,
             activationType = "foreground", 
-            placement = "contextMenu" if self.is_content else None,
+            placement = "contextMenu" if self.is_context else None,
             imageUri = self.icon,
             hint_inputId = self.input_id,
             hint_buttonStyle = self.style,

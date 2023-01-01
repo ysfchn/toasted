@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import get_args, Dict, Generic, Literal, Optional, Any, Tuple, Type, List, Iterable, TypeVar, Union
 from toasted.enums import ToastElementType
+import platform
 
 T = TypeVar('T')
 
@@ -48,6 +49,19 @@ def resolve_value(val : str, is_media : bool = False) -> Tuple[str, str, Optiona
     return None, val, None,
 
 
+def get_windows_version() -> Tuple[int, float]:
+    ver = platform.version()
+    if not ver.replace(".", "").isnumeric():
+        raise ValueError(f"Invalid Windows version: {ver}")
+    rel, bul = ver.rsplit(".", 1)
+    rel = float(rel)
+    bul = int(bul)
+    # If build is above 20000, then we are in Windows 11.
+    if bul > 20000:
+        rel += 1.0
+    return rel, bul,
+
+
 class ToastBase(ABC):
     __slots__ = ()
 
@@ -82,7 +96,7 @@ class ToastResult:
 
 
 class ToastElement(ToastBase):
-    _registry : Dict[str, "ToastElement"] = []
+    _registry : List[Tuple[str, "ToastElement"]] = []
     _etype : ToastElementType
 
     def __init_subclass__(cls, ename : str, etype : ToastElementType, **kwargs) -> None:
@@ -92,7 +106,7 @@ class ToastElement(ToastBase):
 
     @classmethod
     def _create_from_type(cls, _type : str, **kwargs) -> "ToastElement":
-        for x, y in cls._registry.items():
+        for x, y in cls._registry:
             if x == _type:
                 return y.from_json(kwargs)
         raise ValueError(

@@ -1,7 +1,7 @@
 __all__ = ["Toast"]
 
 import os
-from toasted.common import ToastElementContainer, ToastElement, get_enum, xml, ToastResult
+from toasted.common import ToastElementContainer, ToastElement, get_enum, xml, ToastResult, get_windows_version
 from toasted.enums import ToastDuration, ToastScenario, ToastSound, ToastElementType, ToastNotificationMode
 import asyncio
 import re
@@ -435,7 +435,10 @@ class Toast(ToastElementContainer):
         if data:
             self._toast.data = self._build_notification_data(data)
         if self.group_id:
-            self._toast.group = self.group_id
+            release, _ = get_windows_version()
+            # TODO: Looks like groups doesn't work in Windows 11.
+            if release != 11:
+                self._toast.group = self.group_id
         if self.toast_id:
             self._toast.tag = self.toast_id
         self._toast.suppress_popup = not self.show_popup

@@ -6,6 +6,8 @@ Toast notifications library for Windows. Unlike other Windows toast libraries, T
 
 ![](.github/assets/preview.png)
 
+<sup>[Photo](https://unsplash.com/photos/qUP1ws-mzhw) by Oleg Laptev from Unsplash</sup>
+
 ## Install
 
 ```
