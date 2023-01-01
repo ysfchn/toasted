@@ -123,13 +123,15 @@ class Toast(ToastElementContainer):
             However, if the message in your notification is only relevant for a period of time, 
             you should set an expiration time on the toast notification so the users do not see stale information 
             from your app. For example, if a promotion is only valid for 12 hours, set the expiration time to 12 hours.
-        source_app_id:
+        app_id:
             Windows requires an ID of installed application in the computer to show notifications from. Therefore,
-            Python must be installed on the computer. However, you can set a custom "source_app_id" of an application
+            Python must be installed on the computer. However, you can set a custom "app_id" of an application
             that installed on your computer, so you can display toast notification on embedded versions of Python.
             For example, setting "Microsoft.Windows.Explorer" as ID will display "Windows Explorer" in the toast.
             Defaults to executable path of the Python (sys.executable).
     """
+
+    _current_app_id : Optional[str] = None
 
     __slots__ = (
         "duration",
@@ -145,7 +147,6 @@ class Toast(ToastElementContainer):
         "expiration_time",
         "group_id",
         "toast_id",
-        "source_app_id",
         "_toast_handler",
         "_show_handler",
         "_manager",
@@ -171,7 +172,7 @@ class Toast(ToastElementContainer):
         remote_images : bool = True,
         add_query_params : bool = False,
         expiration_time : Optional[datetime] = None,
-        source_app_id : str = sys.executable
+        app_id : Optional[str] = None
     ) -> None:
         super().__init__()
         self.duration = duration
@@ -187,7 +188,7 @@ class Toast(ToastElementContainer):
         self.expiration_time = expiration_time
         self.group_id = group_id
         self.toast_id = toast_id
-        self.source_app_id = source_app_id
+        self.app_id = app_id
         self._toast_handler : Optional[Callable[[str, Optional[Dict[str, str]], int], None]] = None
         self._show_handler : Optional[Callable] = None
         self._manager : ToastNotifier = None
@@ -212,8 +213,7 @@ class Toast(ToastElementContainer):
             sound_loop = self.sound_loop,
             remote_images = self.remote_images,
             add_query_params = self.add_query_params,
-            expiration_time = self.expiration_time,
-            source_app_id = self.source_app_id
+            expiration_time = self.expiration_time
         )
         x._toast_handler = self._toast_handler
         x._show_handler = self._show_handler
@@ -237,7 +237,7 @@ class Toast(ToastElementContainer):
             remote_images = bool(json.get("remote_images", True)),
             add_query_params = bool(json.get("add_query_params", False)),
             expiration_time = None if "expiration_time" not in json else datetime.fromisoformat(json["expiration_time"]),
-            source_app_id = str(json.get("group_id", "")) or sys.executable
+            app_id = str(json.get("app_id", "")) or None
         )
         for el in json["elements"]:
             toast.append(ToastElement._create_from_type(**el))
@@ -344,9 +344,8 @@ class Toast(ToastElementContainer):
     def _to_xml_document(self, mute_sound : bool) -> dom.XmlDocument:
         self._xml_mute_sound = mute_sound
         self._xml_resolve_http = True
-        xmldata = self.to_xml()
         xml = dom.XmlDocument()
-        xml.load_xml(xmldata)
+        xml.load_xml(self.to_xml())
         return xml
 
 
@@ -439,7 +438,8 @@ class Toast(ToastElementContainer):
         path of the temporary file.
 
         Parameters:
-            A bytes object or an iterator of bytes.
+            data:
+                A bytes object or an iterator of bytes.
         """
         is_iterator = isinstance(data, CollectionsIterator)
         filename = str(uuid4()).replace("-", "")
@@ -464,10 +464,12 @@ class Toast(ToastElementContainer):
         """
         Registers an app ID (AUMID) in Windows Registry to use a custom icon and name for notifications.
         Returns the given handle.
+        https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast-other-apps#step-1-register-your-app-in-the-registry
 
         Parameters:
             handle:
-                A unique ID that identifies the app. Example: "Toasted.Notification.Test"
+                A unique ID that identifies the app in "CompanyName.ProductName.SubProduct.VersionInformation" format,
+                (last section, "VersionInformation" is optional)
             display_name:
                 A display name for application. Shows as title in notification. If not provided, same as handle.
             icon_background_color:
@@ -477,7 +479,8 @@ class Toast(ToastElementContainer):
             show_in_settings:
                 True (default) to show this application in notification settings.
         """
-        # https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast-other-apps
+        if (not handle) or (len(handle) > 129):
+            raise ValueError("Invalid handle; " + ("maximum allowed characters is 129." if handle else "can't be empty."))
         key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
         winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_EXPAND_SZ, display_name or handle)
         winreg.SetValueEx(key, "IconBackgroundColor", 0, winreg.REG_SZ, (icon_background_color or "#00000000").replace("#", ""))
@@ -488,11 +491,40 @@ class Toast(ToastElementContainer):
 
 
     @staticmethod
-    def unregister_app_id(handle : str):
+    def unregister_app_id(handle : str) -> None:
         """
-        Unregisters an app ID in Windows Registry.
+        Unregisters an app ID in Windows Registry by deleting the associated key. Unwanted
+        system behaviours MAY happen if you unregister an another application of system. It is
+        advised to only work with handles used in register_app_id()
+
+        Parameters:
+            handle:
+                A unique ID that identifies the app.
         """
         winreg.DeleteKey(winreg.HKEY_CURRENT_USER, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
+
+
+    @property
+    def app_id(self) -> str:
+        return self._current_app_id or sys.executable
+
+    @app_id.setter
+    def app_id(self, value : Optional[str]) -> None:
+        """
+        Sets the app ID for currently running Python process.
+        https://learn.microsoft.com/en-us/windows/win32/shell/appids#how-to-form-an-application-defined-appusermodelid
+
+        Parameters:
+            app_id:
+                An executable file path of application registered on system 
+                or an AUMID in "CompanyName.ProductName.SubProduct.VersionInformation" format,
+                (last section, "VersionInformation" is optional)
+        """
+        if value != Toast._current_app_id:
+            Toast._current_app_id = value or sys.executable
+            # https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-setcurrentprocessexplicitappusermodelid
+            # https://stackoverflow.com/a/1552105
+            windll.shell32.SetCurrentProcessExplicitAppUserModelID(value or sys.executable)
 
 
     def _create_handler_future(
@@ -516,11 +548,8 @@ class Toast(ToastElementContainer):
         mute_sound : bool = False,
         data : Optional[Dict[str, str]] = None
     ):
-        # https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-setcurrentprocessexplicitappusermodelid
-        # https://stackoverflow.com/a/1552105
-        windll.shell32.SetCurrentProcessExplicitAppUserModelID(self.source_app_id)
         # For convenience, allow muting the sound without setting "toast.sound = None".
-        self._manager = ToastNotificationManager.create_toast_notifier(self.source_app_id)
+        self._manager = ToastNotificationManager.create_toast_notifier(self.app_id)
         event_loop = asyncio.get_running_loop()
         self._toast = ToastNotification(self._to_xml_document(mute_sound))
         if data:
@@ -549,11 +578,11 @@ class Toast(ToastElementContainer):
 
 
     def history_clear(self) -> None:
-        self.history_remove_other(self.source_app_id)
+        self.history_remove_other(self.app_id)
 
 
     def history_remove(self) -> None:
-        self.history_remove_other(self.source_app_id, self.group_id, self.toast_id)
+        self.history_remove_other(self.app_id, self.group_id, self.toast_id)
 
 
     @staticmethod
@@ -573,7 +602,7 @@ class Toast(ToastElementContainer):
 
     def toasts_enabled(self) -> bool:
         if not self._manager:
-            self._manager = ToastNotificationManager.create_toast_notifier(self.source_app_id)
+            self._manager = ToastNotificationManager.create_toast_notifier(self.app_id)
         return self._manager.setting == NotificationSetting.ENABLED
 
 
@@ -594,7 +623,7 @@ class Toast(ToastElementContainer):
     ) -> bool:
         """
         Updates the notification without showing a new one. Used for changing dynamic
-        values (a.k.a. binding values). You won't need that if you don't use any binding
+        values (a.k.a. binding values). You won't need this method if you don't use any binding
         values. Returns True if succeded (always True if silent is False).
 
         Parameters:
