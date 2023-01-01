@@ -151,7 +151,7 @@ class ToastElement(ToastBase):
         # "source" is attribute name, "src" is name of the attribute in output XML
         x = []
         if self._esources:
-            for k, v in self.items():
+            for k, v in self._esources.items():
                 c_type, c_old, c_new = resolve_value(getattr(self, k), is_media = True)
                 x.append((c_type, v or k, c_old, c_old or c_new))
         return x

@@ -429,7 +429,7 @@ class Toast(ToastElementContainer):
                 return
             filename = str(uuid4()).replace("-", "")
             filesystem = self._create_temp_filesystem()
-            with closing(filesystem.open(filesystem, mode="wb")) as file:
+            with closing(filesystem.open(filename, mode="wb")) as file:
                 for i in stream.iter_bytes(1024 * 10):
                     file.write(i)
             return filesystem.getsyspath("/" + filename)
@@ -443,12 +443,12 @@ class Toast(ToastElementContainer):
         show_in_settings : bool = True
     ) -> str:
         """
-        Registers an app ID in Windows Registry to use a custom icon and name for notifications.
+        Registers an app ID (AUMID) in Windows Registry to use a custom icon and name for notifications.
         Returns the given handle.
 
         Parameters:
             handle:
-                A unique AUMID that identifies the app. Example: "Toasted.Notification.Test"
+                A unique ID that identifies the app. Example: "Toasted.Notification.Test"
             display_name:
                 A display name for application. Shows as title in notification. If not provided, same as handle.
             icon_background_color:
@@ -597,7 +597,6 @@ class Toast(ToastElementContainer):
         event_loop, f1, f2, f3, t1, t2, t3, custom_sound = self._init_toast(mute_sound, data)
         tokens = {"1": t1, "2": t2, "3": t3}
         self._manager.show(self._toast)
-        self._close_temp_filesystem()
         future = event_loop.create_future()
         # If sound is custom, play with winsound.
         if custom_sound:
