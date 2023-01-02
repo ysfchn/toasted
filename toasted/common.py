@@ -31,7 +31,7 @@ __all__ = [
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Dict, Generic, Optional, Any, Tuple, Type, List, Iterable, TypeVar, Union
-from toasted.enums import ToastElementType
+from toasted.enums import ToastElementType, ToastDismissReason
 import platform
 
 T = TypeVar('T')
@@ -103,7 +103,7 @@ class ToastResult:
         arguments : str,
         inputs : dict,
         show_data : dict,
-        dismiss_reason : int
+        dismiss_reason : ToastDismissReason
     ) -> None:
         self.arguments = arguments
         self.inputs = inputs
@@ -112,7 +112,7 @@ class ToastResult:
 
     @property
     def is_dismissed(self):
-        return self.dismiss_reason != -1
+        return self.dismiss_reason != ToastDismissReason.NOT_DISMISSED
 
     def __bool__(self):
         return self.is_dismissed

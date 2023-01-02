@@ -22,6 +22,7 @@
 
 __all__ = [
     "ToastDuration",
+    "ToastDismissReason",
     "ToastScenario",
     "ToastElementType",
     "ToastImagePlacement",
@@ -36,6 +37,14 @@ from enum import Enum
 class ToastDuration(Enum):
     LONG = "long"
     SHORT = "short"
+
+
+# https://learn.microsoft.com/en-us/uwp/api/windows.ui.notifications.toastdismissalreason?view=winrt-22621#fields
+class ToastDismissReason(Enum):
+    TIMED_OUT = 2
+    USER_CANCELED = 0
+    APPLICATION_HIDDEN = 1
+    NOT_DISMISSED = -1
 
 
 # https://docs.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/toast-schema#toastscenario

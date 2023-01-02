@@ -22,22 +22,18 @@
 
 __all__ = ["Toast"]
 
-import os
 from contextlib import closing
 from collections.abc import Iterator as CollectionsIterator
 from toasted.common import ToastElementContainer, ToastElement, get_enum, xml, ToastResult, get_windows_version
-from toasted.enums import ToastDuration, ToastScenario, ToastSound, ToastElementType, ToastNotificationMode
+from toasted.enums import ToastDuration, ToastScenario, ToastSound, ToastElementType, ToastNotificationMode, ToastDismissReason
 import asyncio
-import re
 from ctypes import windll
 from datetime import datetime
 import locale
-import mimetypes
 import inspect
 import sys
-from tempfile import NamedTemporaryFile
 import winsound
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple, Union
 from pathlib import Path
 import winreg
 from uuid import uuid4
@@ -365,7 +361,7 @@ class Toast(ToastElementContainer):
                 x : IPropertyValue._from(y).get_string() for x, y in eventargs.user_input.items()
             }),
             show_data = {} if not toast.data else dict(toast.data.values.items()),
-            dismiss_reason = -1
+            dismiss_reason = ToastDismissReason.NOT_DISMISSED
         )
         self._toast_result = result
         if self._toast_handler:
@@ -379,7 +375,7 @@ class Toast(ToastElementContainer):
             arguments = "", 
             inputs = {},
             show_data = {} if not toast.data else dict(toast.data.values.items()), 
-            dismiss_reason = args.reason.value
+            dismiss_reason = ToastDismissReason(args.reason.value)
         )
         self._toast_result = result
         if self._toast_handler:
