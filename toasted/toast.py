@@ -217,6 +217,10 @@ class Toast(ToastElementContainer):
         return x
 
     
+    def __del__(self):
+        self._close_temp_filesystem()
+
+    
     @staticmethod
     def from_json(json : Dict[str, Any]) -> "Toast":
         toast = Toast(
@@ -335,14 +339,6 @@ class Toast(ToastElementContainer):
             displayTimestamp = None if not self.timestamp else self.timestamp.isoformat(),
             useButtonStyle = using_custom_style or None
         )
-
-
-    def _to_xml_document(self, mute_sound : bool) -> dom.XmlDocument:
-        self._xml_mute_sound = mute_sound
-        self._xml_resolve_http = True
-        xml = dom.XmlDocument()
-        xml.load_xml(self.to_xml())
-        return xml
 
 
     def _build_notification_data(self, data : dict) -> NotificationData:
@@ -547,7 +543,12 @@ class Toast(ToastElementContainer):
         # For convenience, allow muting the sound without setting "toast.sound = None".
         self._manager = ToastNotificationManager.create_toast_notifier(self.app_id)
         event_loop = asyncio.get_running_loop()
-        self._toast = ToastNotification(self._to_xml_document(mute_sound))
+        # Create toast XML document
+        self._xml_mute_sound = mute_sound
+        self._xml_resolve_http = True
+        xml = dom.XmlDocument()
+        xml.load_xml(self.to_xml())
+        self._toast = ToastNotification(xml)
         if data:
             self._toast.data = self._build_notification_data(data)
         if self.group_id:

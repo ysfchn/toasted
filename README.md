@@ -1,8 +1,10 @@
 # toasted
 
-Toast notifications library for Windows. Unlike other Windows toast libraries, Toasted is the one of the most comprehensive toast libraries as it supports all elements (images, progress bars, texts, inputs, buttons...) that you probably never seen on a toast. Not only that, it also wraps useful features found in the Notifications API.
+Yet another notifications library for Windows, written in Python and built on top of WinRT.
 
-> Struggling with making a GUI for your script? Say no more.
+However, unlike most toast libraries, this one supports all Windows notification elements that you probably never seen on a toast. You can even set a custom application name and icon! It also provides helper functions from Windows Notifications API. 
+
+It works on Windows 10 and 11, though outdated builds of Windows 10 may not work as it doesn't include all APIs used in the library.
 
 ![](.github/assets/preview.png)
 
@@ -25,9 +27,14 @@ from toasted import Toast, Text, ToastResult
 # see docstring for all available parameters.
 mytoast = Toast()
 
-# Add elements.
-mytoast += Text("Hello world!")           # Using += operator.
-mytoast.data.append(Text("Hello world!")) # Or access the inner list with Toast.data.
+# Create new Text element.
+# Check docstrings of elements for available options for each elements.
+text = Text("Hello world!")
+text2 = Text("This is the second line.")
+
+# Add / remove elements to toast.
+mytoast += text            # 1) += / -= operator for a clean syntax
+mytoast.data.append(text2) # 2) or access the "data" attribute (which is a list)
 
 # Set up a handler.
 # This handler will be executed when toasted has clicked or dismissed.
@@ -38,10 +45,12 @@ def myhandler(ctx : ToastResult):
     else:
         print("Toast has dismissed with reason", ctx.dismiss_reason)
 
-# Run show() async function. show() function returns ToastResult
-# like handler, if you prefer to access toast result inline.
+# Run show() async function. show() function also returns ToastResult
+# like handler (if you prefer to access toast result inline)
 asyncio.run(mytoast.show())
 ```
+
+Toasted can also be useful for asking configuration options in GUI-like way for your scripts.
 
 ## Features
 
@@ -61,7 +70,13 @@ from toasted import Toast, Text
 # https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast-other-apps
 Toast.register_app_id("MyOrg.MyDomain.MyPhone", "My Phone App")
 
-mytoast = Toast(source_app_id = "MyOrg.MyDomain.MyPhone")
+# Setting app_id property causes Python to tell Windows that the currently running process 
+# is running under the specified application ID (MyOrg.MyDomain.MyPhone) instead of Python executable.
+mytoast = Toast(app_id = "MyOrg.MyDomain.MyPhone")
+
+# Or change app_id later, same behaviour applies too.
+mytoast.app_id = "MyOrg.MyDomain.MyPhone"
+
 ...
 ```
 
@@ -71,7 +86,7 @@ Since applications are registered in Windows Registry, this will leave traces in
 
 ### Custom sounds
 
-If an custom sound has provided, toast's own sound will be muted and Python's `winsound` module will be used instead. Also, sounds from HTTP sources are supported too.
+If an custom sound (HTTP, file path or bytes) has provided, toast's own sound will be muted and Python's `winsound` module will be used instead. Also, sounds from HTTP sources are supported too.
 
 ### Update toast content (Data binding)
 

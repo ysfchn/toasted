@@ -191,6 +191,10 @@ class ToastGenericContainer(Generic[T], ToastBase):
         self.append(other)
         return self
 
+    def __imul__(self, other : T):
+        self.remove(other)
+        return self
+
     def __iter__(self) -> T:
         return iter(self.data)
 
