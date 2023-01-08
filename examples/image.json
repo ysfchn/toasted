@@ -4,26 +4,26 @@
     "group_id": "mygroup",
     "elements": [
         {
-            "@type": "image",
+            "_type": "image",
             "source": "https://iili.io/iIzDJe.png",
             "placement": "HERO"
         },
         {
-            "@type": "image",
+            "_type": "image",
             "source": "https://iili.io/iIzb5u.jpg",
             "placement": "LOGO",
             "is_circle": true
         },
         {
-            "@type": "text",
+            "_type": "text",
             "content": "Data Transfer"
         },
         {
-            "@type": "text",
+            "_type": "text",
             "content": "Transferring to @ysfchn..."
         },
         {
-            "@type": "progress",
+            "_type": "progress",
             "value": 0.75,
             "title": "projects.zip",
             "status": "Sending...",

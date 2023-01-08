@@ -4,23 +4,23 @@
     "group_id": "mygroup",
     "elements": [
         {
-            "@type": "text",
+            "_type": "text",
             "content": "Send Picture"
         },
         {
-            "@type": "input",
+            "_type": "input",
             "id": "inputMail",
             "placeholder": "example@example.com",
             "title": "E-mail address"
         },
         {
-            "@type": "input",
+            "_type": "input",
             "id": "inputMessage",
             "default": "Hello world!",
             "title": "Message"
         },
         {
-            "@type": "select",
+            "_type": "select",
             "id": "select1",
             "options": {
                 "yes": "Yes",
@@ -30,22 +30,22 @@
             "title": "Encrypt message"
         },
         {
-            "@type": "button",
+            "_type": "button",
             "input_id": "inputMail",
             "content": "Save to contacts",
             "arguments": "save"
         },
         {
-            "@type": "image",
+            "_type": "image",
             "source": "https://picsum.photos/id/675/650/350"
         },
         {
-            "@type": "button",
+            "_type": "button",
             "content": "Change image",
             "arguments": "change"
         },
         {
-            "@type": "button",
+            "_type": "button",
             "content": "Send",
             "arguments": "send"
         }

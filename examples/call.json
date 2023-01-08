@@ -6,29 +6,29 @@
     "sound_loop": true,
     "elements": [
         {
-            "@type": "text",
+            "_type": "text",
             "content": "Anonymous",
             "is_center": true
         },
         {
-            "@type": "text",
+            "_type": "text",
             "content": "Incoming Call",
             "is_center": true
         },
         {
-            "@type": "image",
+            "_type": "image",
             "source": "https://picsum.photos/id/743/500/500",
             "is_circle": true
         },
         {
-            "@type": "button",
+            "_type": "button",
             "content": "Accept",
             "arguments": "accept",
             "icon": "https://iili.io/iITa3P.png",
             "style": "SUCCESS"
         },
         {
-            "@type": "button",
+            "_type": "button",
             "content": "Decline",
             "arguments": "decline",
             "icon": "https://iili.io/iIT76B.png",
