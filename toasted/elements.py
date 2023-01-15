@@ -234,8 +234,9 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button", es
             The URI of the image source for a toast button icon. 
             These icons are white transparent 16x16 pixel images at 100% scaling and should have no padding 
             included in the image itself. If you choose to provide icons on a toast notification, 
-            you must provide icons for ALL of your buttons in the notification, 
-            as it transforms the style of your buttons into icon buttons.
+            you must provide icons for ALL of your buttons in the notification, as it transforms the style 
+            of your buttons into icon buttons. In dark theme, the icon will show in white color, otherwise,
+            in black color. This is a Windows behaviour.
         input_id:
             Set to the ID of an input to position button beside the input.
         style:

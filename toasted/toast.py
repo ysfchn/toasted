@@ -39,6 +39,11 @@ from pathlib import Path
 import winreg
 from uuid import uuid4
 import httpx
+from fs.tempfs import TempFS
+from winsdk._winrt import Object
+from winsdk.windows.foundation import IPropertyValue, EventRegistrationToken
+from winsdk.windows.ui.viewmanagement import AccessibilitySettings, UISettings, UIColorType
+import winsdk.windows.data.xml.dom as dom
 from winsdk.windows.ui.notifications import (
     ToastNotification, 
     ToastNotificationManager, 
@@ -49,11 +54,6 @@ from winsdk.windows.ui.notifications import (
     NotificationSetting,
     NotificationData
 )
-from winsdk._winrt import Object
-from winsdk.windows.foundation import IPropertyValue, EventRegistrationToken
-from winsdk.windows.ui.viewmanagement import AccessibilitySettings, UISettings, UIColorType
-import winsdk.windows.data.xml.dom as dom
-from fs.tempfs import TempFS
 
 
 class Toast(ToastElementContainer):
@@ -94,8 +94,9 @@ class Toast(ToastElementContainer):
             sent to a Windows 8.x device. Doing so will cause a dropped notification.
         base_path:
             Specify a base file path which is used when an image source is a relative path. For example, if base_path is
-            "file:///C:\\Users\\ysfchn\\Desktop\\" and an Image element's source is "test.png", the resulting path will be 
-            "file:///C:\\Users\\ysfchn\\Desktop\\test.png", defaults to "file:///". If specified, it must end with backslash (\\).
+            "file:///C:/Users/ysfchn/Desktop/" and an Image element's source is "test.png", the resulting path will be 
+            "file:///C:/Users/ysfchn/Desktop/test.png", defaults to current running path. 
+            If specified, it must end with slash (/).
         sound:
             Specifies a sound to play when a toast notification is displayed. Set to None for mute the notification sound.
         sound_loop:
@@ -278,7 +279,7 @@ class Toast(ToastElementContainer):
                         output[0],
                         template = "ToastGeneric"
                     ),
-                    baseUri = self.base_path or "file:///"
+                    baseUri = self.base_path or ("file:///" + Path(".").resolve().as_posix() + "/") 
                 ) + ("" if not output[1] else \
                 xml(
                     "actions", 
