@@ -34,6 +34,21 @@ __all__ = [
 
 from enum import Enum
 
+# --------------------
+# Internal
+# --------------------
+
+class ToastElementType(Enum):
+    VISUAL = 1
+    ACTION = 2
+    HEADER = 3
+
+
+# --------------------
+# API
+# --------------------
+
+# https://learn.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-toast#attributes
 class ToastDuration(Enum):
     LONG = "long"
     SHORT = "short"
@@ -55,18 +70,13 @@ class ToastScenario(Enum):
     URGENT = "urgent"
 
 
-class ToastElementType(Enum):
-    VISUAL = 1
-    ACTION = 2
-    HEADER = 3
-
-
 # https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-image#attributes
 class ToastImagePlacement(Enum):
     LOGO = "appLogoOverride"
     HERO = "hero"
 
 
+# https://learn.microsoft.com/en-us/uwp/api/windows.ui.notifications.toastnotificationmode?view=winrt-22621#fields
 class ToastNotificationMode(Enum):
     UNRESTRICTED = 0
     PRIORITY_ONLY = 1

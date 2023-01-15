@@ -22,5 +22,6 @@
 
 from toasted.common import ToastResult
 import toasted.enums
+import toasted.history
 from toasted.toast import Toast
 from toasted.elements import *

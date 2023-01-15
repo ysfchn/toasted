@@ -25,6 +25,7 @@ __all__ = ["Toast"]
 from contextlib import closing
 from collections.abc import Iterator as CollectionsIterator
 from toasted.common import ToastElementContainer, ToastElement, get_enum, xml, ToastResult, get_windows_version
+from toasted.history import HistoryForToast
 from toasted.enums import ToastDuration, ToastScenario, ToastSound, ToastElementType, ToastNotificationMode, ToastDismissReason
 import asyncio
 from ctypes import windll
@@ -68,7 +69,7 @@ class Toast(ToastElementContainer):
             the launch string provides the context to the app that allows it to show the user a 
             view relevant to the toast content, rather than launching in its default way.
         duration:
-            The amount of time the toast should display.
+            The amount of time the toast should display. Allowed values are "long", "short" and None.
         timestamp:
             Introduced in Creators Update: Overrides the default timestamp with a custom timestamp 
             representing when your notification content was actually delivered, 
@@ -120,11 +121,11 @@ class Toast(ToastElementContainer):
             you should set an expiration time on the toast notification so the users do not see stale information 
             from your app. For example, if a promotion is only valid for 12 hours, set the expiration time to 12 hours.
         app_id:
-            Windows requires an ID of installed application in the computer to show notifications from. Therefore,
-            Python must be installed on the computer. However, you can set a custom "app_id" of an application
-            that installed on your computer, so you can display toast notification on embedded versions of Python.
-            For example, setting "Microsoft.Windows.Explorer" as ID will display "Windows Explorer" in the toast.
-            Defaults to executable path of the Python (sys.executable).
+            Windows requires an ID of installed application in the computer to show notifications from. This also
+            sets the icon and name of the given application in the toast title. Defaults to executable path of Python
+            (sys.executable), so notification will show up as "Python". However, this will not work for embedded versions
+            of Python since Python is not installed on system, so you will need to change this. You can also register 
+            an ID in system to use a custom name and icon. See `Toast.register_app_id()`.
     """
 
     _current_app_id : Optional[str] = None
@@ -195,55 +196,6 @@ class Toast(ToastElementContainer):
         self._temp_filesystem : Optional[TempFS] = None
 
 
-    def __copy__(self) -> "Toast":
-        x = Toast(
-            duration = self.duration,
-            arguments = self.arguments,
-            scenario = self.scenario,
-            toast_id = self.toast_id,
-            group_id = self.group_id,
-            show_popup = self.show_popup,
-            timestamp = self.timestamp,
-            base_path = self.base_path,
-            sound = self.sound,
-            sound_loop = self.sound_loop,
-            remote_images = self.remote_images,
-            add_query_params = self.add_query_params,
-            expiration_time = self.expiration_time
-        )
-        x._toast_handler = self._toast_handler
-        x._show_handler = self._show_handler
-        x.data = self.data
-        return x
-
-    
-    def __del__(self):
-        self._close_temp_filesystem()
-
-    
-    @staticmethod
-    def from_json(json : Dict[str, Any]) -> "Toast":
-        toast = Toast(
-            duration = get_enum(ToastDuration, json.get("duration", None)),
-            arguments = json.get("arguments", None),
-            scenario = get_enum(ToastScenario, json.get("scenario", None)),
-            group_id = str(json.get("group_id", "")) or None,
-            toast_id = str(json.get("toast_id", "")) or None,
-            show_popup = bool(json.get("show_popup", True)),
-            base_path = str(json.get("base_path", "")) or None,
-            timestamp = None if "timestamp" not in json else datetime.fromisoformat(json["timestamp"]),
-            sound = json.get("sound", ToastSound.DEFAULT),
-            sound_loop = bool(json.get("sound_loop", False)),
-            remote_images = bool(json.get("remote_images", True)),
-            add_query_params = bool(json.get("add_query_params", False)),
-            expiration_time = None if "expiration_time" not in json else datetime.fromisoformat(json["expiration_time"]),
-            app_id = str(json.get("app_id", "")) or None
-        )
-        for el in json["elements"]:
-            toast.append(ToastElement._create_from_type(**el))
-        return toast
-
-
     def handler(self, function : Optional[Callable[[ToastResult], None]] = None):
         """
         A decorator that calls the function when user has clicked or dismissed the toast.
@@ -272,10 +224,6 @@ class Toast(ToastElementContainer):
                 self._show_handler = func
                 return func
             return decorator
-
-
-    def copy(self) -> "Toast":
-        return self.__copy__()
 
 
     def to_xml(self) -> str:
@@ -344,7 +292,7 @@ class Toast(ToastElementContainer):
     def _build_notification_data(self, data : dict) -> NotificationData:
         x = NotificationData()
         for k, v in data.items():
-            x.values[k] = str(v)
+            x.values[str(k)] = str(v)
         return x
 
 
@@ -519,6 +467,14 @@ class Toast(ToastElementContainer):
             windll.shell32.SetCurrentProcessExplicitAppUserModelID(value or sys.executable)
 
 
+    @property
+    def history(self) -> HistoryForToast:
+        """
+        Get History object bound for this toast.
+        """
+        return HistoryForToast(self)
+
+
     def _create_handler_future(
         self,
         notification : ToastNotification, 
@@ -572,24 +528,6 @@ class Toast(ToastElementContainer):
         f2, t2 = self._create_handler_future(self._toast, event_loop, "add_dismissed", "_handle_toast_dismissed")
         f3, t3 = self._create_handler_future(self._toast, event_loop, "add_failed", "_handle_toast_failed")
         return event_loop, f1, f2, f3, t1, t2, t3, custom_sound,
-
-
-    def history_clear(self) -> None:
-        self.history_remove_other(self.app_id)
-
-
-    def history_remove(self) -> None:
-        self.history_remove_other(self.app_id, self.group_id, self.toast_id)
-
-
-    @staticmethod
-    def history_remove_other(app_id : str, group_id : Optional[str] = None, toast_id : Optional[str] = None) -> None:
-        if toast_id and group_id:
-            ToastNotificationManager.get_default().history.remove(toast_id, group_id, app_id)
-        elif group_id:
-            ToastNotificationManager.get_default().history.remove_group(group_id, app_id)
-        else:
-            ToastNotificationManager.get_default().history.clear(app_id)
 
 
     @staticmethod
@@ -701,3 +639,41 @@ class Toast(ToastElementContainer):
                 self._toast.remove_dismissed(t2)
             if (t3 := tokens['3']) is not None:
                 self._toast.remove_failed(t3)
+
+
+    @staticmethod
+    def from_json(json : Dict[str, Any]) -> "Toast":
+        toast = Toast(
+            duration = get_enum(ToastDuration, json.get("duration", None)),
+            arguments = json.get("arguments", None),
+            scenario = get_enum(ToastScenario, json.get("scenario", None)),
+            group_id = str(json.get("group_id", "")) or None,
+            toast_id = str(json.get("toast_id", "")) or None,
+            show_popup = bool(json.get("show_popup", True)),
+            base_path = str(json.get("base_path", "")) or None,
+            timestamp = None if "timestamp" not in json else datetime.fromisoformat(json["timestamp"]),
+            sound = json.get("sound", ToastSound.DEFAULT),
+            sound_loop = bool(json.get("sound_loop", False)),
+            remote_images = bool(json.get("remote_images", True)),
+            add_query_params = bool(json.get("add_query_params", False)),
+            expiration_time = None if "expiration_time" not in json else datetime.fromisoformat(json["expiration_time"]),
+            app_id = str(json.get("app_id", "")) or None
+        )
+        for el in json["elements"]:
+            toast.append(ToastElement._create_from_type(**el))
+        return toast
+
+    def copy(self) -> "Toast":
+        return self.__copy__()
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__} id={self.toast_id} group={self.group_id} elements={len(self.data)}>"
+
+    def __del__(self):
+        self._close_temp_filesystem()
+
+    def __copy__(self) -> "Toast":
+        x = Toast()
+        for i in self.__slots__:
+            setattr(x, i, getattr(self, i))
+        return x
