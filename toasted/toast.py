@@ -227,6 +227,9 @@ class Toast(ToastElementContainer):
 
 
     def to_xml(self) -> str:
+        """
+        Returns XML data for this Toast.
+        """
         # Cleanup old cached media.
         self._close_temp_filesystem()
         output = ["", "", ""]
@@ -287,87 +290,6 @@ class Toast(ToastElementContainer):
             displayTimestamp = None if not self.timestamp else self.timestamp.isoformat(),
             useButtonStyle = using_custom_style or None
         )
-
-
-    def _build_notification_data(self, data : dict) -> NotificationData:
-        x = NotificationData()
-        for k, v in data.items():
-            x.values[str(k)] = str(v)
-        return x
-
-
-    def _handle_toast_activated(self, toast : ToastNotification, args : Object):
-        self._close_temp_filesystem()
-        eventargs = ToastActivatedEventArgs._from(args)
-        result = ToastResult(
-            arguments = eventargs.arguments,
-            inputs = ({} if not eventargs.user_input else {
-                x : IPropertyValue._from(y).get_string() for x, y in eventargs.user_input.items()
-            }),
-            show_data = {} if not toast.data else dict(toast.data.values.items()),
-            dismiss_reason = ToastDismissReason.NOT_DISMISSED
-        )
-        self._toast_result = result
-        if self._toast_handler:
-            self._toast_handler(self._toast_result)
-
-
-    def _handle_toast_dismissed(self, toast : ToastNotification, args : ToastDismissedEventArgs):
-        self._close_temp_filesystem()
-        winsound.PlaySound(None, 4)
-        result = ToastResult(
-            arguments = "", 
-            inputs = {},
-            show_data = {} if not toast.data else dict(toast.data.values.items()), 
-            dismiss_reason = ToastDismissReason(args.reason.value)
-        )
-        self._toast_result = result
-        if self._toast_handler:
-            self._toast_handler(self._toast_result)
-
-
-    def _handle_toast_failed(self, toast : ToastNotification, args : ToastFailedEventArgs):
-        self._close_temp_filesystem()
-        winsound.PlaySound(None, 4)
-        raise RuntimeError("Toast failed with error code:", args.error_code.value)
-
-
-    def _build_image_query_params(self) -> Dict[str, Any]:
-        # Build query parameters like how Windows does.
-        color = UISettings().get_color_value(UIColorType.BACKGROUND)
-        lang = locale.windows_locale[windll.kernel32.GetUserDefaultUILanguage()].lower().replace("_", "-")
-        high_contrast = AccessibilitySettings().high_contrast
-        return {
-            "ms-contrast": "high" if high_contrast else "standard",
-            "ms-lang": lang,
-            "ms-theme": "dark" if (color.g + color.r + color.b) == 0 else "light"
-        }
-
-
-    def _create_temp_filesystem(self) -> TempFS:
-        if self._temp_filesystem:
-            return self._temp_filesystem
-        self._temp_filesystem = TempFS()
-        return self._temp_filesystem
-
-
-    def _close_temp_filesystem(self) -> None:
-        if self._temp_filesystem:
-            self._temp_filesystem.close()
-
-
-    def _download_media(self, remote : str, add_query_params : bool = False) -> Optional[str]:
-        # Only allow media smaller than or equal to 3 MB.
-        # https://docs.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast?tabs=uwp#adding-images
-        with httpx.stream(
-            "GET", remote, 
-            trust_env = False, follow_redirects = True, 
-            headers = {"Range": "bytes=0-3000000"}, 
-            params = None if not add_query_params else self._build_image_query_params()
-        ) as stream:
-            if not stream.is_success:
-                return
-            return self.import_media(stream.iter_bytes(1024 * 10))
 
 
     def import_media(self, data : Union[bytes, Iterator[bytes]]) -> str:
@@ -455,8 +377,7 @@ class Toast(ToastElementContainer):
 
 
     @property
-    def app_id(self) -> str:
-        return self._current_app_id or sys.executable
+    def app_id(self) -> str: return self._current_app_id or sys.executable
 
     @app_id.setter
     def app_id(self, value : Optional[str]) -> None:
@@ -485,63 +406,11 @@ class Toast(ToastElementContainer):
         return HistoryForToast(self)
 
 
-    def _create_handler_future(
-        self,
-        notification : ToastNotification, 
-        loop : asyncio.AbstractEventLoop, 
-        method_name : str, 
-        hook_name : str
-    ) -> Tuple[asyncio.Future, EventRegistrationToken]:
-        future = loop.create_future()
-        token : EventRegistrationToken = getattr(notification, method_name)(lambda sender, event_args: \
-            loop.call_soon_threadsafe(
-                future.set_result, getattr(self, hook_name)(sender, event_args)
-            )
-        )
-        return future, token, 
-
-
-    def _init_toast(
-        self,
-        mute_sound : bool = False,
-        data : Optional[Dict[str, str]] = None
-    ):
-        # For convenience, allow muting the sound without setting "toast.sound = None".
-        self._manager = ToastNotificationManager.create_toast_notifier(self.app_id)
-        event_loop = asyncio.get_running_loop()
-        # Create toast XML document
-        self._xml_mute_sound = mute_sound
-        self._xml_resolve_http = True
-        xml = dom.XmlDocument()
-        xml.load_xml(self.to_xml())
-        self._toast = ToastNotification(xml)
-        if data:
-            self._toast.data = self._build_notification_data(data)
-        if self.group_id:
-            release, _ = get_windows_version()
-            # TODO: Looks like groups doesn't work in Windows 11.
-            if release != 11:
-                self._toast.group = self.group_id
-        if self.toast_id:
-            self._toast.tag = self.toast_id
-        self._toast.suppress_popup = not self.show_popup
-        self._toast.expiration_time = self.expiration_time
-        custom_sound = None
-        # Check for custom sound, and if custom sound is HTTP, download it.
-        if (not (self.sound or "ms-winsoundevent:").startswith("ms-winsoundevent:")):
-            if (self.sound or "").startswith("http"):
-                custom_sound = self._download_media(self.sound, False)
-            else:
-                custom_sound = self.sound
-        # Create handlers.
-        f1, t1 = self._create_handler_future(self._toast, event_loop, "add_activated", "_handle_toast_activated")
-        f2, t2 = self._create_handler_future(self._toast, event_loop, "add_dismissed", "_handle_toast_dismissed")
-        f3, t3 = self._create_handler_future(self._toast, event_loop, "add_failed", "_handle_toast_failed")
-        return event_loop, f1, f2, f3, t1, t2, t3, custom_sound,
-
-
     @staticmethod
     def get_notification_mode() -> ToastNotificationMode:
+        """
+        Get notification mode (alarms only, priority only or unrestricted) of this device.
+        """
         return ToastNotificationMode(ToastNotificationManager.get_default().notification_mode.value)
 
 
@@ -647,6 +516,148 @@ class Toast(ToastElementContainer):
             if (t3 := tokens['3']) is not None:
                 self._toast.remove_failed(t3)
 
+    # --------------------
+    # Private
+    # --------------------
+
+    def _create_handler_future(
+        self,
+        notification : ToastNotification, 
+        loop : asyncio.AbstractEventLoop, 
+        method_name : str, 
+        hook_name : str
+    ) -> Tuple[asyncio.Future, EventRegistrationToken]:
+        future = loop.create_future()
+        token : EventRegistrationToken = getattr(notification, method_name)(lambda sender, event_args: \
+            loop.call_soon_threadsafe(
+                future.set_result, getattr(self, hook_name)(sender, event_args)
+            )
+        )
+        return future, token, 
+
+
+    def _init_toast(
+        self,
+        mute_sound : bool = False,
+        data : Optional[Dict[str, str]] = None
+    ):
+        # For convenience, allow muting the sound without setting "toast.sound = None".
+        self._manager = ToastNotificationManager.create_toast_notifier(self.app_id)
+        event_loop = asyncio.get_running_loop()
+        # Create toast XML document
+        self._xml_mute_sound = mute_sound
+        self._xml_resolve_http = True
+        xml = dom.XmlDocument()
+        xml.load_xml(self.to_xml())
+        self._toast = ToastNotification(xml)
+        if data:
+            self._toast.data = self._build_notification_data(data)
+        if self.group_id:
+            release, _ = get_windows_version()
+            # TODO: Looks like groups doesn't work in Windows 11.
+            if release != 11:
+                self._toast.group = self.group_id
+        if self.toast_id:
+            self._toast.tag = self.toast_id
+        self._toast.suppress_popup = not self.show_popup
+        self._toast.expiration_time = self.expiration_time
+        custom_sound = None
+        # Check for custom sound, and if custom sound is HTTP, download it.
+        if (not (self.sound or "ms-winsoundevent:").startswith("ms-winsoundevent:")):
+            if (self.sound or "").startswith("http"):
+                custom_sound = self._download_media(self.sound, False)
+            else:
+                custom_sound = self.sound
+        # Create handlers.
+        f1, t1 = self._create_handler_future(self._toast, event_loop, "add_activated", "_handle_toast_activated")
+        f2, t2 = self._create_handler_future(self._toast, event_loop, "add_dismissed", "_handle_toast_dismissed")
+        f3, t3 = self._create_handler_future(self._toast, event_loop, "add_failed", "_handle_toast_failed")
+        return event_loop, f1, f2, f3, t1, t2, t3, custom_sound,
+
+    
+    def _build_notification_data(self, data : dict) -> NotificationData:
+        x = NotificationData()
+        for k, v in data.items():
+            x.values[str(k)] = str(v)
+        return x
+
+
+    def _handle_toast_activated(self, toast : ToastNotification, args : Object):
+        self._close_temp_filesystem()
+        eventargs = ToastActivatedEventArgs._from(args)
+        result = ToastResult(
+            arguments = eventargs.arguments,
+            inputs = ({} if not eventargs.user_input else {
+                x : IPropertyValue._from(y).get_string() for x, y in eventargs.user_input.items()
+            }),
+            show_data = {} if not toast.data else dict(toast.data.values.items()),
+            dismiss_reason = ToastDismissReason.NOT_DISMISSED
+        )
+        self._toast_result = result
+        if self._toast_handler:
+            self._toast_handler(self._toast_result)
+
+
+    def _handle_toast_dismissed(self, toast : ToastNotification, args : ToastDismissedEventArgs):
+        self._close_temp_filesystem()
+        winsound.PlaySound(None, 4)
+        result = ToastResult(
+            arguments = "", 
+            inputs = {},
+            show_data = {} if not toast.data else dict(toast.data.values.items()), 
+            dismiss_reason = ToastDismissReason(args.reason.value)
+        )
+        self._toast_result = result
+        if self._toast_handler:
+            self._toast_handler(self._toast_result)
+
+
+    def _handle_toast_failed(self, toast : ToastNotification, args : ToastFailedEventArgs):
+        self._close_temp_filesystem()
+        winsound.PlaySound(None, 4)
+        raise RuntimeError("Toast failed with error code:", args.error_code.value)
+
+
+    def _build_image_query_params(self) -> Dict[str, Any]:
+        # Build query parameters like how Windows does.
+        color = UISettings().get_color_value(UIColorType.BACKGROUND)
+        lang = locale.windows_locale[windll.kernel32.GetUserDefaultUILanguage()].lower().replace("_", "-")
+        high_contrast = AccessibilitySettings().high_contrast
+        return {
+            "ms-contrast": "high" if high_contrast else "standard",
+            "ms-lang": lang,
+            "ms-theme": "dark" if (color.g + color.r + color.b) == 0 else "light"
+        }
+
+
+    def _create_temp_filesystem(self) -> TempFS:
+        if self._temp_filesystem:
+            return self._temp_filesystem
+        self._temp_filesystem = TempFS()
+        return self._temp_filesystem
+
+
+    def _close_temp_filesystem(self) -> None:
+        if self._temp_filesystem:
+            self._temp_filesystem.close()
+
+
+    def _download_media(self, remote : str, add_query_params : bool = False) -> Optional[str]:
+        # Only allow media smaller than or equal to 3 MB.
+        # https://docs.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast?tabs=uwp#adding-images
+        with httpx.stream(
+            "GET", remote, 
+            trust_env = False, follow_redirects = True, 
+            headers = {"Range": "bytes=0-3000000"}, 
+            params = None if not add_query_params else self._build_image_query_params()
+        ) as stream:
+            if not stream.is_success:
+                return
+            return self.import_media(stream.iter_bytes(1024 * 10))
+
+    # --------------------
+    # Misc
+    # --------------------
 
     @staticmethod
     def from_json(json : Dict[str, Any]) -> "Toast":
@@ -691,5 +702,7 @@ class Toast(ToastElementContainer):
     def __copy__(self) -> "Toast":
         x = Toast()
         for i in self.__slots__:
+            if i in ["_toast_result", "_temp_filesystem"]:
+                continue
             setattr(x, i, getattr(self, i))
         return x
