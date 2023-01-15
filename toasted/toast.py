@@ -244,11 +244,15 @@ class Toast(ToastElementContainer):
             el = element.to_xml()
             # Download remote images to disk, and replace the URL
             # with the cached image's file path by editing the output XML.
-            if self.remote_images and self._xml_resolve_http:
-                for r_type, r_key, r_value, _ in element._resolve():
-                    if r_type == "REMOTE":
-                        temp_file = "file:///" + Path(self._download_media(r_value, self.add_query_params) or "").resolve().as_posix()
-                        el = el.replace(r_key + "=\"" + r_value + "\"", r_key + "=\"" + temp_file + "\"")
+            # Also convert backslashes to slashes for local paths.
+            for restype, xmlkey, oldvalue, newvalue in element._resolve():
+                if (restype == "REMOTE") and (self.remote_images and self._xml_resolve_http):
+                    temp_file = "file:///" + Path(self._download_media(oldvalue, self.add_query_params) or "").resolve().as_posix()
+                    el = el.replace(xmlkey + "=\"" + oldvalue + "\"", xmlkey + "=\"" + temp_file + "\"")
+                elif (restype == "ALOCAL"):
+                    el = el.replace(xmlkey + "=\"" + oldvalue + "\"", xmlkey + "=\"file:///" + Path(newvalue).resolve().as_posix() + "\"")
+                elif (restype == "RLOCAL"):
+                    el = el.replace(xmlkey + "=\"" + oldvalue + "\"", xmlkey + "=\"" + Path(newvalue).resolve().as_posix() + "\"")
             # Enable custom styles on the toast
             # if button has a custom style.
             if "hint-buttonStyle=\"" in el:

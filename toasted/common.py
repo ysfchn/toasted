@@ -23,7 +23,6 @@
 __all__ = [
     "xml",
     "get_enum",
-    "resolve_value",
     "get_windows_version",
     "ToastResult"
 ]
@@ -33,8 +32,14 @@ from enum import Enum
 from typing import Dict, Generic, Optional, Any, Tuple, Type, List, Iterable, TypeVar, Union
 from toasted.enums import ToastElementType, ToastDismissReason
 import platform
+import re
 
 T = TypeVar('T')
+
+SOURCE_PATTERN = re.compile(
+    # Invalid paths like 'file:///Users/test' should be flagged as absolute or relative?
+    "^(?P<remote>https?://.*)|(?:(?:ms-appx://|ms-appdata://|file://)?/?(?P<alocal>[A-Z]:/.*))|(?:\\./)?(?P<rlocal>.*)$"
+)
 
 def xml(element : str, _data : Optional[str] = None, **kwargs) -> str:
     attr = ""
@@ -54,22 +59,6 @@ def xml(element : str, _data : Optional[str] = None, **kwargs) -> str:
 
 def get_enum(enum : Type[Enum], value : Any, default : T = None) -> Union[Enum, T]:
     return next((y for x, y in enum._member_map_.items() if (y.value == value) or (y == value) or (x == value)), default)
-
-
-def resolve_value(val : str, is_media : bool = False) -> Tuple[Optional[str], str, Optional[str]]:
-    # Binding values
-    if str(val).startswith("{") and str(val).startswith("}"):
-        return "BINDING", val, str(val)[1:-1],
-    elif is_media:
-        # Remote
-        if str(val).startswith("http://") or str(val).startswith("https://"):
-            return "REMOTE", val, None,
-        # Local
-        return "LOCAL", val, \
-            str(val).removeprefix("ms-appx://") \
-            .removeprefix("ms-appdata://") \
-            .removeprefix("/"),
-    return None, val, None,
 
 
 def get_windows_version() -> Tuple[float, int]:
@@ -152,8 +141,16 @@ class ToastElement(ToastBase):
         x = []
         if self._esources:
             for k, v in self._esources.items():
-                c_type, c_old, c_new = resolve_value(getattr(self, k), is_media = True)
-                x.append((c_type, v or k, c_old, c_old or c_new))
+                match = re.match(SOURCE_PATTERN, v)
+                if not match:
+                    raise ValueError(f"Invalid path '{v}', needs to be HTTP or a file path.")
+                remote, alocal, rlocal = match.groups()
+                if remote:
+                    x.append(("REMOTE", k, v, remote))
+                elif alocal:
+                    x.append(("ALOCAL", k, v, alocal))
+                elif rlocal:
+                    x.append(("RLOCAL", k, v, rlocal))
         return x
 
     def __repr__(self) -> str:
