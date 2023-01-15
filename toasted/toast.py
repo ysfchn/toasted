@@ -443,6 +443,16 @@ class Toast(ToastElementContainer):
         """
         winreg.DeleteKey(winreg.HKEY_CURRENT_USER, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
 
+    
+    @staticmethod
+    def toasts_enabled() -> bool:
+        """
+        Returns True if notifications (for current app ID) are enabled on the device. Otherwise, False.
+        """
+        return \
+            ToastNotificationManager.create_toast_notifier(Toast._current_app_id or sys.executable).setting \
+            == NotificationSetting.ENABLED
+
 
     @property
     def app_id(self) -> str:
@@ -451,7 +461,7 @@ class Toast(ToastElementContainer):
     @app_id.setter
     def app_id(self, value : Optional[str]) -> None:
         """
-        Sets the app ID for currently running Python process.
+        Sets or gets the app ID for currently running Python process.
         https://learn.microsoft.com/en-us/windows/win32/shell/appids#how-to-form-an-application-defined-appusermodelid
 
         Parameters:
@@ -535,13 +545,10 @@ class Toast(ToastElementContainer):
         return ToastNotificationMode(ToastNotificationManager.get_default().notification_mode.value)
 
 
-    def toasts_enabled(self) -> bool:
-        if not self._manager:
-            self._manager = ToastNotificationManager.create_toast_notifier(self.app_id)
-        return self._manager.setting == NotificationSetting.ENABLED
-
-
     def hide(self) -> None:
+        """
+        Dismisses this toast and stops the custom sound if currently playing. 
+        """
         # If any of these properties are not set, 
         # then we are sure that toast never displayed before.
         if (not self._toast) or (not self._manager):
@@ -643,6 +650,14 @@ class Toast(ToastElementContainer):
 
     @staticmethod
     def from_json(json : Dict[str, Any]) -> "Toast":
+        """
+        Create a new Toast from a dictionary (JSON types only)
+
+        Parameters:
+            json:
+                Dictionary for toast data. Use "elements" key to define toast elements.
+                Element types are defined with "_type" key.
+        """
         toast = Toast(
             duration = get_enum(ToastDuration, json.get("duration", None)),
             arguments = json.get("arguments", None),
@@ -662,6 +677,7 @@ class Toast(ToastElementContainer):
         for el in json["elements"]:
             toast.append(ToastElement._create_from_type(**el))
         return toast
+
 
     def copy(self) -> "Toast":
         return self.__copy__()
