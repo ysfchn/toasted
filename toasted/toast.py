@@ -22,111 +22,170 @@
 
 __all__ = ["Toast"]
 
-from contextlib import closing
-from collections.abc import Iterator as CollectionsIterator
-from toasted.common import ToastElementContainer, ToastElement, get_enum, xml, ToastResult, get_windows_version
+from toasted.common import ( 
+    ToastElement,
+    ToastPayload,
+    ToastThemeInfo,
+    get_enum, 
+    xml, 
+    ToastResult, 
+    get_windows_version, 
+    resolve_uri,
+    get_theme_query_parameters,
+    xmldata_to_content,
+    XMLData
+)
+from toasted.filesystem import ToastMediaFileSystem
 from toasted.history import HistoryForToast
-from toasted.enums import ToastDuration, ToastScenario, ToastSound, ToastElementType, ToastNotificationMode, ToastDismissReason
+from toasted.enums import (
+    ToastDuration, 
+    ToastScenario, 
+    ToastSound, 
+    ToastElementType, 
+    ToastNotificationMode, 
+    ToastDismissReason
+)
+
 import asyncio
-from ctypes import windll
 from datetime import datetime
 import locale
 import inspect
 import sys
-import winsound
-from typing import Any, Callable, Dict, Iterator, Optional, Tuple, Union
-from pathlib import Path
-import winreg
-from uuid import uuid4
-import httpx
-from fs.tempfs import TempFS
-from winsdk._winrt import Object
-from winsdk.windows.foundation import IPropertyValue, EventRegistrationToken
-from winsdk.windows.ui.viewmanagement import AccessibilitySettings, UISettings, UIColorType
-import winsdk.windows.data.xml.dom as dom
-from winsdk.windows.ui.notifications import (
-    ToastNotification, 
-    ToastNotificationManager, 
-    ToastActivatedEventArgs, 
-    ToastDismissedEventArgs, 
-    ToastFailedEventArgs,
-    ToastNotifier,
-    NotificationSetting,
-    NotificationData
+from typing import (
+    Any, Callable, Dict, Generator, Optional, Tuple, 
+    List, Union, Literal, Set
 )
+from pathlib import Path
+from uuid import uuid4
 
+if sys.platform == "win32":
+    import winreg
+    import winsound
+    from ctypes import windll
 
-class Toast(ToastElementContainer):
+    from winsdk._winrt import Object # type: ignore
+    from winsdk.windows.foundation import IPropertyValue, EventRegistrationToken # type: ignore
+    from winsdk.windows.ui.viewmanagement import ( # type: ignore
+        AccessibilitySettings, 
+        UISettings, 
+        UIColorType
+    )
+    import winsdk.windows.data.xml.dom as dom # type: ignore
+    from winsdk.windows.ui.notifications import ( # type: ignore
+        ToastNotification, 
+        ToastNotificationManager, 
+        ToastActivatedEventArgs, 
+        ToastDismissedEventArgs, 
+        ToastFailedEventArgs,
+        ToastNotifier,
+        NotificationSetting,
+        NotificationData
+    )
+
+ToastDataType = Dict[str, str]
+ToastResultCallbackType = Optional[Callable[[ToastResult], None]]
+ToastShowCallbackType = Optional[Callable[[Optional[ToastDataType]], None]]
+
+ToastElementTreeType = Union[ToastElement, List["ToastElementTreeType"]]
+ToastElementsListType = List[ToastElementTreeType]
+
+ToastElementTreeJSONType = Union[Dict[str, Any], List["ToastElementTreeJSONType"]]
+ToastElementsListJSONType = List[ToastElementTreeJSONType]
+
+LEVEL_START = "LEVEL_START"
+LEVEL_END = "LEVEL_END"
+
+ToastElementWalkLevelType = Literal["LEVEL_START", "LEVEL_END"]
+
+class Toast:
     """
     Represents a toast.
     https://docs.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/adaptive-interactive-toasts?tabs=builder-syntax
 
     Args:
         arguments:
-            A string that is passed to the application when it is activated by the toast. 
-            The format and contents of this string are defined by the app for its own use. 
-            When the user taps or clicks the toast to launch its associated app, 
-            the launch string provides the context to the app that allows it to show the user a 
-            view relevant to the toast content, rather than launching in its default way.
+            A string that is passed to the application when it is activated by the 
+            toast. The format and contents of this string are defined by the app for 
+            its own use. When the user taps or clicks the toast to launch its 
+            associated app, the launch string provides the context to the app that 
+            allows it to show the user a view relevant to the toast content, rather 
+            than launching in its default way.
         duration:
-            The amount of time the toast should display. Allowed values are "long", "short" and None.
+            The amount of time the toast should display. Allowed values are 
+            "long", "short" and None.
         timestamp:
-            Introduced in Creators Update: Overrides the default timestamp with a custom timestamp 
-            representing when your notification content was actually delivered, 
-            rather than the time the notification was received by the Windows platform.
+            Introduced in Creators Update: Overrides the default timestamp with a 
+            custom timestamp representing when your notification content was actually 
+            delivered, rather than the time the notification was received by the 
+            Windows platform.
         scenario:
             The scenario your toast is used for, like an alarm or reminder. 
-            REMINDER: A reminder notification. This will be displayed pre-expanded and stay on the user's screen till dismissed.
-            ALARM: An alarm notification. This will be displayed pre-expanded and stay on the user's screen till dismissed. 
-                Audio will loop by default and will use alarm audio.
-            INCOMING_CALL: An incoming call notification. This will be displayed pre-expanded in a special call format and 
-                stay on the user's screen till dismissed. Audio will loop by default and will use ringtone audio.
-            URGENT:  An important notification. This allows users to have more control over what apps can send them 
-                high-priority toast notifications that can break through Focus Assist (Do not Disturb). 
-                This can be modified in the notifications settings.
+            REMINDER: A reminder notification. This will be displayed pre-expanded and 
+            stay on the user's screen till dismissed.
+            ALARM: An alarm notification. This will be displayed pre-expanded and stay 
+                on the user's screen till dismissed. Audio will loop by default and 
+                will use alarm audio.
+            INCOMING_CALL: An incoming call notification. This will be displayed 
+                pre-expanded in a special call format and stay on the user's screen 
+                till dismissed. Audio will loop by default and will use ringtone audio.
+            URGENT: An important notification. This allows users to have more control 
+                over what apps can send them high-priority toast notifications that can 
+                break through Focus Assist (Do not Disturb). This can be modified in 
+                the notifications settings.
         group_id:
-            Group ID that this toast belongs in. Used for deleting a notification from Action Center.
+            Group ID that this toast belongs in. Used for deleting a notification 
+            from Action Center.
         toast_id:
             ID of the toast. Used for deleting a notification from Action Center.
         show_popup:
-            Gets or sets whether a toast's pop-up UI is displayed on the user's screen. If pop-up is not shown,
-            the notification will be added to Action Center silently. Do not set this property to true in a toast 
-            sent to a Windows 8.x device. Doing so will cause a dropped notification.
+            Gets or sets whether a toast's pop-up UI is displayed on the user's screen. 
+            If pop-up is not shown, the notification will be added to Action Center 
+            silently. Do not set this property to true in a toast sent to a Windows 
+            8.x device. Doing so will cause a dropped notification.
         base_path:
-            Specify a base file path which is used when an image source is a relative path. For example, if base_path is
-            "file:///C:/Users/ysfchn/Desktop/" and an Image element's source is "test.png", the resulting path will be 
-            "file:///C:/Users/ysfchn/Desktop/test.png", defaults to current running path. 
-            If specified, it must end with slash (/).
+            Specify a base file path which is used when an image source is a relative 
+            path. For example, if base_path is "file:///C:/Users/ysfchn/Desktop/" and 
+            an Image element's source is "test.png", the resulting path will be 
+            "file:///C:/Users/ysfchn/Desktop/test.png", defaults to current running 
+            path. If specified, it must end with slash (/).
         sound:
-            Specifies a sound to play when a toast notification is displayed. Set to None for mute the notification sound.
+            Specifies a sound to play when a toast notification is displayed. 
+            Set to None for mute the notification sound.
         sound_loop:
             Set to true if the sound should repeat as long as the toast is shown; 
             false to play only once. If this attribute is set to true, 
             the duration attribute in the toast element must also be set. 
             There are specific sounds provided to be used when looping. 
-        remote_images:
-            If True, makes https:// and http:// links functional on image sources by downloading the images in 
-            temporary directory, then deletes them when toast has clicked or dismissed. 
+        remote_media:
+            If True, makes https:// and http:// links functional on media sources by 
+            downloading the files in temporary directory, then deletes them when toast 
+            has clicked or dismissed.
         add_query_params:
             Set to True to append a query string to the image URI supplied 
-            in the toast notification. Use this attribute if your server hosts images and can handle query strings, 
-            either by retrieving an image variant based on the query strings or by ignoring the query string 
-            and returning the image as specified without the query string. This query string specifies 
+            in the toast notification. Use this attribute if your server hosts images 
+            and can handle query strings, either by retrieving an image variant based 
+            on the query strings or by ignoring the query string and returning the 
+            image as specified without the query string. This query string specifies 
             contrast setting, language and theme; for instance, a value of:
             "https://example.com/images/foo.png" given in the notification becomes
             "https://example.com/images/foo.png?ms-contrast=standard&ms-lang=en-us&ms-theme=dark".
         expiration_time:
-            In Windows 10, all toast notifications go in Action Center after they are dismissed or 
-            ignored by the user, so users can look at your notification after the popup is gone.
-            However, if the message in your notification is only relevant for a period of time, 
-            you should set an expiration time on the toast notification so the users do not see stale information 
-            from your app. For example, if a promotion is only valid for 12 hours, set the expiration time to 12 hours.
+            In Windows 10, all toast notifications go in Action Center after they are 
+            dismissed or ignored by the user, so users can look at your notification 
+            after the popup is gone. However, if the message in your notification is 
+            only relevant for a period of time, you should set an expiration time on 
+            the toast notification so the users do not see stale information from your 
+            app. For example, if a promotion is only valid for 12 hours, set the 
+            expiration time to 12 hours.
         app_id:
-            Windows requires an ID of installed application in the computer to show notifications from. This also
-            sets the icon and name of the given application in the toast title. Defaults to executable path of Python
-            (sys.executable), so notification will show up as "Python". However, this will not work for embedded versions
-            of Python since Python is not installed on system, so you will need to change this. You can also register 
-            an ID in system to use a custom name and icon. See `Toast.register_app_id()`.
+            Windows requires an ID of installed application in the computer to show 
+            notifications from. This also sets the icon and name of the given 
+            application in the toast title. Defaults to executable path of Python
+            (sys.executable), so notification will show up as "Python". However, this 
+            will not work for embedded versions of Python since Python is not installed 
+            on system, so you will need to change this. You can also register 
+            an ID in system to use a custom name and icon. 
+            See `Toast.register_app_id()`.
     """
 
     _current_app_id : Optional[str] = None
@@ -140,19 +199,24 @@ class Toast(ToastElementContainer):
         "base_path",
         "sound",
         "sound_loop",
-        "remote_images",
+        "elements",
+        "remote_media",
         "add_query_params",
         "expiration_time",
         "group_id",
         "toast_id",
-        "_toast_handler",
-        "_show_handler",
-        "_manager",
-        "_toast",
+        "_callback_result",
+        "_callback_show",
+        "_imp_manager",
+        "_imp_toast",
         "_xml_mute_sound",
-        "_xml_resolve_http",
+        "_fs"
+    )
+
+    _exclude_copy = (
+        "_fs",
         "_toast_result",
-        "_temp_filesystem"
+        "_xml_mute_sound"
     )
 
     def __init__(
@@ -167,12 +231,13 @@ class Toast(ToastElementContainer):
         base_path : Optional[str] = None,
         sound : Optional[str] = ToastSound.DEFAULT,
         sound_loop : bool = False,
-        remote_images : bool = True,
+        remote_media : bool = True,
         add_query_params : bool = False,
         expiration_time : Optional[datetime] = None,
         app_id : Optional[str] = None
     ) -> None:
         super().__init__()
+        self.elements : ToastElementsListType = []
         self.duration = duration
         self.arguments = arguments
         self.scenario = scenario
@@ -181,143 +246,189 @@ class Toast(ToastElementContainer):
         self.base_path = base_path
         self.sound = sound or None
         self.sound_loop = sound_loop
-        self.remote_images = remote_images
+        self.remote_media = remote_media
         self.add_query_params = add_query_params
         self.expiration_time = expiration_time
         self.group_id = group_id
         self.toast_id = toast_id
         self.app_id = app_id
-        self._toast_handler : Optional[Callable[[str, Optional[Dict[str, str]], int], None]] = None
-        self._show_handler : Optional[Callable] = None
-        self._manager : ToastNotifier = None
-        self._toast : ToastNotification = None
+        self._callback_result : ToastResultCallbackType = None
+        self._callback_show : ToastShowCallbackType = None
+        self._imp_manager : "ToastNotifier" = None
+        self._imp_toast : "ToastNotification" = None
         self._xml_mute_sound : bool = False
-        self._xml_resolve_http : bool = False
-        self._toast_result : Optional[ToastResult] = None
-        self._temp_filesystem : Optional[TempFS] = None
+        self._fs : Optional[ToastMediaFileSystem] = None
 
 
-    def handler(self, function : Optional[Callable[[ToastResult], None]] = None):
+    def on_result(self, function : ToastResultCallbackType = None):
         """
-        A decorator that calls the function when user has clicked or dismissed the toast.
-        An instance of ToastResult will be passed to the handler.
+        A decorator that calls the function when user has clicked or dismissed 
+        the toast. An instance of ToastResult will be passed to the handler.
         """
         if function:
-            self._toast_handler = function
+            self._callback_result = function
             return function
         else:
             def decorator(func : Callable):
-                self._toast_handler = func
+                self._callback_result = func
                 return func
             return decorator
 
 
-    def shown(self, function : Optional[Callable] = None):
+    def on_shown(self, function : ToastShowCallbackType = None):
         """
         A decorator that calls the function when toast has shown with show().
         The notification data passed to show() will be passed to the handler.
         """
         if function:
-            self._show_handler = function
+            self._callback_show = function
             return function
         else:
             def decorator(func : Callable):
-                self._show_handler = func
+                self._callback_show = func
                 return func
             return decorator
 
 
-    def to_xml(self) -> str:
+    def get_payload(
+        self,
+        download_media : bool = False
+    ) -> ToastPayload:
         """
-        Returns XML data for this Toast.
+        Walk elements and convert them to XML recursively.
         """
-        # Cleanup old cached media.
-        self._close_temp_filesystem()
-        output = ["", "", ""]
-        # 1st - Visual
-        # 2nd - Action
-        # 3rd - Other
+        params = None if not self.add_query_params else get_theme_query_parameters(
+            info = self.get_theme_info()
+        )
+        visual, actions, other = ("", ) * 3
+        current_level = 0
         using_custom_style : bool = False
-        for element in self.data:
-            if not isinstance(element, ToastElement):
-                raise ValueError("Element must be a type of ToastElement:", element)
-            el = element.to_xml()
-            # Download remote images to disk, and replace the URL
-            # with the cached image's file path by editing the output XML.
-            # Also convert backslashes to slashes for local paths.
-            for restype, xmlkey, oldvalue, newvalue in element._resolve():
-                if (restype == "REMOTE") and (self.remote_images and self._xml_resolve_http):
-                    temp_file = "file:///" + Path(self._download_media(oldvalue, self.add_query_params) or "").resolve().as_posix()
-                    el = el.replace(xmlkey + "=\"" + oldvalue + "\"", xmlkey + "=\"" + temp_file + "\"")
-                elif (restype == "ALOCAL"):
-                    el = el.replace(xmlkey + "=\"" + oldvalue + "\"", xmlkey + "=\"file:///" + Path(newvalue).resolve().as_posix() + "\"")
-                elif (restype == "RLOCAL"):
-                    el = el.replace(xmlkey + "=\"" + oldvalue + "\"", xmlkey + "=\"" + Path(newvalue).resolve().as_posix() + "\"")
-            # Enable custom styles on the toast
-            # if button has a custom style.
-            if "hint-buttonStyle=\"" in el:
-                using_custom_style = True
-            # Append output XML to list.
-            output[
-                0 if element._etype == ToastElementType.VISUAL else
-                1 if element._etype == ToastElementType.ACTION else
-                2
-            ] += el
-        # Add notification sound properties
-        output[2] += xml(
+        if download_media:
+            if self._fs:
+                self._fs.close()
+            self._fs = ToastMediaFileSystem()
+        for el in self._walk_elements(self.elements):
+            if el in [LEVEL_START, LEVEL_END]:
+                is_end = el == LEVEL_END
+                if not is_end:
+                    current_level += 1
+                if current_level > 2:
+                    raise ValueError(
+                        "Toasts doesn't support nested elements other " +
+                        "than groups and subgroups."
+                    )
+                elif current_level == 1:
+                    visual += f"<{'/' if is_end else ''}group>"
+                elif current_level == 2:
+                    visual += f"<{'/' if is_end else ''}subgroup>"
+                if is_end:
+                    current_level -= 1
+            else:
+                xmldata = el.to_xml_data()
+                xmlcontent = ""
+                override = ""
+                if xmldata.source_replace:
+                    source_uri = xmldata.attrs[xmldata.source_replace]
+                    if source_uri:
+                        resolved = resolve_uri(source_uri, self.remote_media)
+                        if isinstance(resolved, bytes):
+                            if download_media:
+                                override = self._fs.put(resolved)
+                        elif isinstance(resolved, str):
+                            if download_media:
+                                override = self._fs.get_or_download(
+                                    url = resolved,
+                                    query_params = params
+                                )
+                        else:
+                            override = resolved.as_uri()
+                    for c in xmldata_to_content(XMLData(
+                        tag = xmldata.tag,
+                        content = xmlcontent,
+                        attrs = {
+                            **(xmldata.attrs or {}), 
+                            xmldata.source_replace : override or None
+                        }
+                    )):
+                        xmlcontent += c or ""
+                else:
+                    for c in xmldata_to_content(xmldata):
+                        xmlcontent += c or ""
+                if el._etype == ToastElementType.ACTION:
+                    actions += xmlcontent
+                elif el._etype == ToastElementType.VISUAL:
+                    visual += xmlcontent
+                else:
+                    other += xmlcontent
+                # Enable custom styles on the toast
+                # if button has a custom style.
+                if xmldata.attrs.get("hint-buttonStyle", None):
+                    using_custom_style = True
+        other += xml(
             "audio", 
-            src = self.sound if (self.sound or "ms-winsoundevent:").startswith("ms-winsoundevent:") else None,
-            # If custom sound has provided, mute the original toast sound to None 
-            # since we use our own sound solution.
-            silent = self._xml_mute_sound or (self.sound == None) or (not (self.sound or "ms-winsoundevent:").startswith("ms-winsoundevent:")),
+            src = self.sound if self.uses_windows_sound else None,
+            # If custom sound has provided, mute the original 
+            # toast sound to None since we use our own sound solution.
+            silent = self._xml_mute_sound or self.uses_custom_sound,
             loop = self.sound_loop
         )
-        self._xml_resolve_http = False
-        # Build toast XML document
-        return xml(
-            "toast",
-                xml(
-                    "visual", 
-                    xml(
-                        "binding", 
-                        output[0],
-                        template = "ToastGeneric"
-                    ),
-                    baseUri = self.base_path or ("file:///" + Path(".").resolve().as_posix() + "/") 
-                ) + ("" if not output[1] else \
-                xml(
-                    "actions", 
-                    output[1]
-                )) + output[2],
-            launch = self.arguments,
+        custom_sound_file : str = ""
+        if self.uses_custom_sound:
+            resolved = resolve_uri(self.sound, self.remote_media)
+            if isinstance(resolved, bytes):
+                if download_media:
+                    custom_sound_file = self._fs.put(resolved)
+            elif isinstance(resolved, str):
+                if download_media:
+                    custom_sound_file = self._fs.get_or_download(
+                        url = resolved,
+                        query_params = params
+                    )
+            else:
+                custom_sound_file = resolved.as_uri()
+        return ToastPayload(
+            uses_custom_style = using_custom_style or None,
+            custom_sound_file = custom_sound_file,
+            base_path = self.base_path or resolve_uri("ms-appx://").as_uri(),
+            arguments = self.arguments,
             duration = None if not self.duration else self.duration.value,
             scenario = None if not self.scenario else self.scenario.value,
-            displayTimestamp = None if not self.timestamp else self.timestamp.isoformat(),
-            useButtonStyle = using_custom_style or None
+            timestamp = (
+                None if not self.timestamp 
+                else self.timestamp.isoformat()
+            ),
+            visual_xml = visual,
+            actions_xml = actions,
+            other_xml = other
         )
 
 
-    def import_media(self, data : Union[bytes, Iterator[bytes]]) -> str:
-        """
-        Creates a temporary file on filesystem with given bytes to use as an image/sound source.
-        In other terms, instead of providing a local file path or a HTTP source to images/sounds,
-        you can provide a bytes object directly using this method. The return value is the created
-        path of the temporary file.
+    @staticmethod
+    def _payload_to_xml_string(payload : ToastPayload):
+        return xml("toast",
+                xml("visual", 
+                    xml("binding", payload.visual_xml, template = "ToastGeneric"),
+                    baseUri = payload.base_path
+                ) + (
+                    "" if not payload.actions_xml else \
+                    xml("actions", payload.actions_xml)
+                ) + \
+            payload.other_xml,
+            launch = payload.arguments,
+            duration = payload.duration,
+            scenario = payload.scenario,
+            displayTimestamp = payload.timestamp,
+            useButtonStyle = payload.uses_custom_style
+        )
 
-        Parameters:
-            data:
-                A bytes object or an iterator of bytes.
-        """
-        is_iterator = isinstance(data, CollectionsIterator)
-        filename = str(uuid4()).replace("-", "")
-        filesystem = self._create_temp_filesystem()
-        with closing(filesystem.open(filename, mode="wb")) as file:
-            if is_iterator:
-                for i in data:
-                    file.write(i)
-            else:
-                file.write(data)
-        return filesystem.getsyspath("/" + filename)
+
+    def to_xml_string(
+        self,
+        download_media : bool = False
+    ) -> str:
+        return self._payload_to_xml_string(
+            self.get_payload(download_media)
+        )
 
 
     @staticmethod
@@ -329,16 +440,18 @@ class Toast(ToastElementContainer):
         show_in_settings : bool = True
     ) -> str:
         """
-        Registers an app ID (AUMID) in Windows Registry to use a custom icon and name for notifications.
-        Returns the given handle.
+        Registers an app ID (AUMID) in Windows Registry to use a custom icon 
+        and name for notifications. Returns the given handle.
         https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast-other-apps#step-1-register-your-app-in-the-registry
 
         Parameters:
             handle:
-                A unique ID that identifies the app in "CompanyName.ProductName.SubProduct.VersionInformation" format,
+                A unique ID that identifies the app in 
+                "CompanyName.ProductName.SubProduct.VersionInformation" format,
                 (last section, "VersionInformation" is optional)
             display_name:
-                A display name for application. Shows as title in notification. If not provided, same as handle.
+                A display name for application. Shows as title in notification. 
+                If not provided, same as handle.
             icon_background_color:
                 Background color of icon in ARGB hex format. Default is #00000000.
             icon_uri:
@@ -346,43 +459,117 @@ class Toast(ToastElementContainer):
             show_in_settings:
                 True (default) to show this application in notification settings.
         """
-        if (not handle) or (len(handle) > 129):
-            raise ValueError("Invalid handle; " + ("maximum allowed characters is 129." if handle else "can't be empty."))
-        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
-        winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_EXPAND_SZ, display_name or handle)
-        winreg.SetValueEx(key, "IconBackgroundColor", 0, winreg.REG_SZ, (icon_background_color or "#00000000").replace("#", ""))
-        winreg.SetValueEx(key, "IconUri", 0, winreg.REG_SZ, icon_uri)
-        winreg.SetValueEx(key, "CustomActivator", 0, winreg.REG_SZ, "{" + str(uuid4()).upper() + "}")
-        winreg.SetValueEx(key, "ShowInSettings", 0, winreg.REG_DWORD, int(show_in_settings))
+        if (not handle) or (len(handle) > 129) or ("\\" in handle):
+            raise ValueError(
+                "Invalid handle; " + (
+                    "maximum allowed characters is 129." if handle 
+                    else "can't be empty."
+                )
+            )
+        key = winreg.CreateKey(
+            winreg.HKEY_CURRENT_USER, "SOFTWARE\\Classes\\AppUserModelId\\" + handle
+        )
+        winreg.SetValueEx(
+            key, "DisplayName", 0, winreg.REG_EXPAND_SZ, 
+            display_name or handle
+        )
+        winreg.SetValueEx(
+            key, "IconBackgroundColor", 0, winreg.REG_SZ, 
+            (icon_background_color or "#00000000").replace("#", "")
+        )
+        winreg.SetValueEx(
+            key, "IconUri", 0, winreg.REG_SZ, 
+            icon_uri
+        )
+        winreg.SetValueEx(
+            key, "CustomActivator", 0, winreg.REG_SZ, 
+            "{" + str(uuid4()).upper() + "}"
+        )
+        winreg.SetValueEx(
+            key, "ShowInSettings", 0, winreg.REG_DWORD, 
+            int(show_in_settings)
+        )
         return handle
 
 
     @staticmethod
     def unregister_app_id(handle : str) -> None:
         """
-        Unregisters an app ID in Windows Registry by deleting the associated key. Unwanted
-        system behaviours MAY happen if you unregister an another application of system. It is
-        advised to only work with handles used in register_app_id()
+        Unregisters an app ID in Windows Registry by deleting the associated key. 
+        Unwanted system behaviours MAY happen if you unregister an another 
+        application of system. It is advised to only work with handles used 
+        in register_app_id()
 
         Parameters:
             handle:
                 A unique ID that identifies the app.
         """
-        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, "SOFTWARE\\Classes\\AppUserModelId\\" + handle)
-
+        winreg.DeleteKey(
+            winreg.HKEY_CURRENT_USER, 
+            "SOFTWARE\\Classes\\AppUserModelId\\" + handle
+        )
     
+
     @staticmethod
-    def toasts_enabled() -> bool:
+    def is_registered_app_id(handle : str) -> bool:
         """
-        Returns True if notifications (for current app ID) are enabled on the device. Otherwise, False.
+        Returns True if given app ID (AUMID) is in Windows Registry.
+        Otherwise, False.
+
+        Parameters:
+            handle:
+                A unique ID that identifies the app.
         """
-        return \
-            ToastNotificationManager.create_toast_notifier(Toast._current_app_id or sys.executable).setting \
-            == NotificationSetting.ENABLED
+        try:
+            winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, 
+                "SOFTWARE\\Classes\\AppUserModelId\\" + handle
+            )
+        except FileNotFoundError:
+            return False
+        return True
 
 
     @property
-    def app_id(self) -> str: return self._current_app_id or sys.executable
+    def can_send_from_app_id(self) -> bool:
+        """
+        Returns True if notifications (for current app ID) are enabled on the device. 
+        Otherwise, False.
+        """
+        try:
+            return \
+                ToastNotificationManager.create_toast_notifier(self.app_id).setting \
+                == NotificationSetting.ENABLED
+        except OSError as e:
+            if e.winerror == -2147023728:
+                # App ID is not registered in the registry.
+                # See register_app_id().
+                # TODO: maybe return a value other than False?
+                return False
+
+
+    @property
+    def uses_custom_sound(self) -> bool:
+        """
+        Returns True if the toast uses a file or a URL as a toast sound.
+        """
+        if self.sound and not self.sound.startswith("ms-winsoundevent:"):
+            return True
+        return False
+
+    @property
+    def uses_windows_sound(self) -> bool:
+        """
+        Returns True if the toast uses sound that comes with the Windows.
+        """
+        if self.sound and self.sound.startswith("ms-winsoundevent:"):
+            return True
+        return False
+
+
+    @property
+    def app_id(self) -> str: 
+        return self._current_app_id or sys.executable
 
     @app_id.setter
     def app_id(self, value : Optional[str]) -> None:
@@ -393,14 +580,16 @@ class Toast(ToastElementContainer):
         Parameters:
             app_id:
                 An executable file path of application registered on system 
-                or an AUMID in "CompanyName.ProductName.SubProduct.VersionInformation" format,
-                (last section, "VersionInformation" is optional)
+                or an AUMID in "CompanyName.ProductName.SubProduct.VersionInformation" 
+                format, (last section, "VersionInformation" is optional)
         """
         if value != Toast._current_app_id:
             Toast._current_app_id = value or sys.executable
             # https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-setcurrentprocessexplicitappusermodelid
             # https://stackoverflow.com/a/1552105
-            windll.shell32.SetCurrentProcessExplicitAppUserModelID(value or sys.executable)
+            windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                value or sys.executable
+            )
 
 
     @property
@@ -414,9 +603,32 @@ class Toast(ToastElementContainer):
     @staticmethod
     def get_notification_mode() -> ToastNotificationMode:
         """
-        Get notification mode (alarms only, priority only or unrestricted) of this device.
+        Get notification mode (alarms only, priority only or unrestricted) 
+        of this device.
         """
-        return ToastNotificationMode(ToastNotificationManager.get_default().notification_mode.value)
+        # Not all versions support this.
+        try:
+            return ToastNotificationMode(
+                ToastNotificationManager.get_default().notification_mode.value
+            )
+        except AttributeError:
+            return ToastNotificationMode.FEATURE_NOT_AVAILABLE
+
+
+    @staticmethod
+    def get_theme_info() -> ToastThemeInfo:
+        """
+        Get information about theme and language setting which is currently
+        set on Windows.
+        """
+        color = UISettings().get_color_value(UIColorType.BACKGROUND)
+        lang = locale.windows_locale[windll.kernel32.GetUserDefaultUILanguage()]
+        high_contrast = AccessibilitySettings().high_contrast
+        return ToastThemeInfo(
+            contrast = "high" if high_contrast else "standard",
+            lang = lang.lower().replace("_", "-"),
+            theme = "dark" if (color.g + color.r + color.b) == 0 else "light"
+        )
 
 
     def hide(self) -> None:
@@ -425,186 +637,206 @@ class Toast(ToastElementContainer):
         """
         # If any of these properties are not set, 
         # then we are sure that toast never displayed before.
-        if (not self._toast) or (not self._manager):
+        if (not self._imp_toast) or (not self._imp_manager):
             return
-        self._close_temp_filesystem()
+        self._fs.close()
         winsound.PlaySound(None, 4)
-        self._manager.hide(self._toast)
+        self._imp_manager.hide(self._imp_toast)
 
 
     def update(
         self,
-        data : Dict[str, str],
+        data : ToastDataType,
         silent : bool = False
     ) -> bool:
         """
         Updates the notification without showing a new one. Used for changing dynamic
-        values (a.k.a. binding values). You won't need this method if you don't use any binding
-        values. Returns True if succeded (always True if silent is False).
+        values (a.k.a. binding values). You won't need this method if you don't use any 
+        binding values. Returns True if succeded (always True if silent is False).
 
         Parameters:
             data:
                 Dictionary of binding keys and their values to replace with.
-                See also show() method to set initial values of binding keys before showing the toast.
+                See also show() method to set initial values of binding keys before 
+                showing the toast.
             silent:
                 If True, no exceptions will be raised when notification was not found 
                 (user has deleted the notification). Defaults to False.
         """
         notifdata = self._build_notification_data(data)
         update_result = None
-        if self.toast_id == None:
-            raise ValueError("Toast must have an ID to use update() function.")
+        if self.toast_id is None:
+            raise ValueError(
+                "Toast must have an ID to use update() function."
+            )
         if self.group_id:
-            update_result = self._manager.update(notifdata, self.toast_id, self.group_id).value
+            update_result = self._imp_manager.update(
+                notifdata, self.toast_id, self.group_id
+            ).value
         else:
-            update_result = self._manager.update(notifdata, self.toast_id).value
+            update_result = self._imp_manager.update(notifdata, self.toast_id).value
         if update_result != 0:
             if not silent:
-                raise Exception("Failed to update the notification;", (
-                    "notification has not found." if update_result == 2 else
-                    "unknown error."
-                ))
+                raise Exception(
+                    "Failed to update the notification; " + (
+                        "notification has not found." if update_result == 2 else
+                        f"unknown error code: {update_result}"
+                    )
+                )
         return update_result == 0
 
 
     async def show(
         self,
-        data : Optional[Dict[str, str]] = None,
-        mute_sound : bool = False
+        data : Optional[ToastDataType] = None,
+        override_mute : bool = False
     ) -> ToastResult:
         """
         Shows the notification. If there is any {binding} key, you can give a "data" 
-        dictionary to replace binding keys with their values. You can also "mute_sound" 
-        to mute notification sound regardless of "sound" attribute of this toast. 
+        dictionary to replace binding keys with their values. You can also 
+        "override_mute" to mute notification sound regardless of 
+        "sound" attribute of this toast. 
 
         Parameters:
             data:
                 Dictionary of binding keys and their initial values to replace with.
                 See also update() method to update binding keys after showing the toast.
-            mute_sound:
-                Mute the sound of this notification, if set any. Can be useful if you want to
-                show same toast but want to mute sound to prevent repetitive notification
-                sounds without needing to change Toast.sound attribute.
+            override_mute:
+                Mute the sound of this notification, if set any. Can be useful if you 
+                want to show same toast but want to mute sound to prevent repetitive 
+                notification sounds without needing to change Toast.sound attribute.
         """
-        event_loop, f1, f2, f3, t1, t2, t3, custom_sound = self._init_toast(mute_sound, data)
-        tokens = {"1": t1, "2": t2, "3": t3}
-        self._manager.show(self._toast)
-        future = event_loop.create_future()
+        event_loop, futures, tokens, custom_sound = self._set_toast_manager(
+            override_mute, data
+        )
+        self._imp_manager.show(self._imp_toast)
         # If sound is custom, play with winsound.
         if custom_sound:
-            if mute_sound:
+            if override_mute:
                 winsound.PlaySound(None, 4)
             else:
                 winsound.PlaySound(
                     Path(custom_sound).resolve().as_posix(), 
-                    winsound.SND_FILENAME + winsound.SND_NODEFAULT + winsound.SND_ASYNC + \
+                    winsound.SND_FILENAME + winsound.SND_NODEFAULT + \
+                    winsound.SND_ASYNC + \
                     (winsound.SND_LOOP if self.sound_loop else 0)
                 )
         # Execute show handler.
-        if self._show_handler:
-            if inspect.iscoroutinefunction(self._show_handler):
-                await self._show_handler(data)
+        if self._callback_show:
+            if inspect.iscoroutinefunction(self._callback_show):
+                await self._callback_show(data)
             else:
                 event_loop.call_soon_threadsafe(
-                    future.set_result, self._show_handler(data)
+                    self._callback_show, data
                 )
-        try:
-            _, pending = await asyncio.wait([f1, f2, f3], return_when = asyncio.FIRST_COMPLETED)
-            for p in pending:
-                p.cancel()
-            return self._toast_result
-        finally:
-            if (t1 := tokens['1']) is not None:
-                self._toast.remove_activated(t1)
-            if (t2 := tokens['2']) is not None:
-                self._toast.remove_dismissed(t2)
-            if (t3 := tokens['3']) is not None:
-                self._toast.remove_failed(t3)
+        done, pending = await asyncio.wait(
+            futures, return_when = asyncio.FIRST_COMPLETED
+        )
+        for p in pending:
+            p.cancel()
+        for i, t in enumerate(tokens):
+            if i == 0:
+                self._imp_toast.remove_activated(t)
+            elif i == 1:
+                self._imp_toast.remove_dismissed(t)
+            elif i == 2:
+                self._imp_toast.remove_failed(t)
+        for d in done:
+            return d.result()
 
     # --------------------
     # Private
     # --------------------
 
-    def _create_handler_future(
+    def _create_future_toast_event(
         self,
-        notification : ToastNotification, 
         loop : asyncio.AbstractEventLoop, 
         method_name : str, 
         hook_name : str
-    ) -> Tuple[asyncio.Future, EventRegistrationToken]:
+    ) -> Tuple[asyncio.Future, "EventRegistrationToken"]:
         future = loop.create_future()
-        token : EventRegistrationToken = getattr(notification, method_name)(lambda sender, event_args: \
+        token : EventRegistrationToken = getattr(self._imp_toast, hook_name)(
+            lambda sender, event_args: \
             loop.call_soon_threadsafe(
-                future.set_result, getattr(self, hook_name)(sender, event_args)
+                future.set_result, getattr(self, method_name)(sender, event_args)
             )
         )
-        return future, token, 
+        return future, token,
 
 
-    def _init_toast(
+    def _set_toast_manager(
         self,
-        mute_sound : bool = False,
-        data : Optional[Dict[str, str]] = None
-    ):
-        # For convenience, allow muting the sound without setting "toast.sound = None".
-        self._manager = ToastNotificationManager.create_toast_notifier(self.app_id)
+        override_mute : bool = False,
+        data : Optional[ToastDataType] = None
+    ) -> Tuple[
+        asyncio.AbstractEventLoop, 
+        Set[asyncio.Future], 
+        Set["EventRegistrationToken"],
+        str
+    ]:
+        self._imp_manager = ToastNotificationManager.create_toast_notifier(self.app_id)
         event_loop = asyncio.get_running_loop()
-        # Create toast XML document
-        self._xml_mute_sound = mute_sound
-        self._xml_resolve_http = True
+        self._xml_mute_sound = override_mute
         xml = dom.XmlDocument()
-        xml.load_xml(self.to_xml())
-        self._toast = ToastNotification(xml)
+        payload = self.get_payload(download_media = True)
+        xml.load_xml(self._payload_to_xml_string(payload))
+        self._imp_toast = ToastNotification(xml)
         if data:
-            self._toast.data = self._build_notification_data(data)
+            self._imp_toast.data = self._build_notification_data(data)
         if self.group_id:
             release, _ = get_windows_version()
             # TODO: Looks like groups doesn't work in Windows 11.
             if release != 11:
-                self._toast.group = self.group_id
+                self._imp_toast.group = self.group_id
         if self.toast_id:
-            self._toast.tag = self.toast_id
-        self._toast.suppress_popup = not self.show_popup
-        self._toast.expiration_time = self.expiration_time
-        custom_sound = None
-        # Check for custom sound, and if custom sound is HTTP, download it.
-        if (not (self.sound or "ms-winsoundevent:").startswith("ms-winsoundevent:")):
-            if (self.sound or "").startswith("http"):
-                custom_sound = self._download_media(self.sound, False)
-            else:
-                custom_sound = self.sound
+            self._imp_toast.tag = self.toast_id
+        self._imp_toast.suppress_popup = not self.show_popup
+        self._imp_toast.expiration_time = self.expiration_time
         # Create handlers.
-        f1, t1 = self._create_handler_future(self._toast, event_loop, "add_activated", "_handle_toast_activated")
-        f2, t2 = self._create_handler_future(self._toast, event_loop, "add_dismissed", "_handle_toast_dismissed")
-        f3, t3 = self._create_handler_future(self._toast, event_loop, "add_failed", "_handle_toast_failed")
-        return event_loop, f1, f2, f3, t1, t2, t3, custom_sound,
+        futures = set()
+        tokens = set()
+        for k, v in (
+            ("add_activated", "_handle_toast_activated"),
+            ("add_dismissed", "_handle_toast_dismissed"),
+            ("add_failed", "_handle_toast_failed")
+        ):
+            print(k, v)
+            fut, tok = self._create_future_toast_event(
+                loop = event_loop, method_name = v, hook_name = k
+            )
+            futures.add(fut)
+            tokens.add(tok)
+        return event_loop, futures, tokens, payload.custom_sound_file,
 
-    
-    def _build_notification_data(self, data : dict) -> NotificationData:
-        x = NotificationData()
-        for k, v in data.items():
-            x.values[str(k)] = str(v)
-        return x
 
-
-    def _handle_toast_activated(self, toast : ToastNotification, args : Object):
-        self._close_temp_filesystem()
+    def _handle_toast_activated(
+        self, 
+        toast : "ToastNotification", 
+        args : "Object"
+    ):
+        self._fs.close()
         eventargs = ToastActivatedEventArgs._from(args)
+        inputs = {}
+        if eventargs.user_input:
+            for x, y in eventargs.user_input.items():
+                inputs[x] = IPropertyValue._from(y).get_string()
         result = ToastResult(
             arguments = eventargs.arguments,
-            inputs = ({} if not eventargs.user_input else {
-                x : IPropertyValue._from(y).get_string() for x, y in eventargs.user_input.items()
-            }),
+            inputs = inputs,
             show_data = {} if not toast.data else dict(toast.data.values.items()),
             dismiss_reason = ToastDismissReason.NOT_DISMISSED
         )
-        self._toast_result = result
-        if self._toast_handler:
-            self._toast_handler(self._toast_result)
+        if self._callback_result:
+            self._callback_result(result)
+        return result
 
 
-    def _handle_toast_dismissed(self, toast : ToastNotification, args : ToastDismissedEventArgs):
-        self._close_temp_filesystem()
+    def _handle_toast_dismissed(
+        self, 
+        toast : "ToastNotification", 
+        args : "ToastDismissedEventArgs"
+    ):
+        self._fs.close()
         winsound.PlaySound(None, 4)
         result = ToastResult(
             arguments = "", 
@@ -612,60 +844,71 @@ class Toast(ToastElementContainer):
             show_data = {} if not toast.data else dict(toast.data.values.items()), 
             dismiss_reason = ToastDismissReason(args.reason.value)
         )
-        self._toast_result = result
-        if self._toast_handler:
-            self._toast_handler(self._toast_result)
+        if self._callback_result:
+            self._callback_result(result)
+        return result
 
 
-    def _handle_toast_failed(self, toast : ToastNotification, args : ToastFailedEventArgs):
-        self._close_temp_filesystem()
+    def _handle_toast_failed(
+        self, 
+        toast : "ToastNotification",
+        args : "ToastFailedEventArgs"
+    ):
+        self._fs.close()
         winsound.PlaySound(None, 4)
-        raise RuntimeError("Toast failed with error code:", args.error_code.value)
+        raise RuntimeError(
+            "Toast failed with error code: " + args.error_code.value
+        )
 
 
-    def _build_image_query_params(self) -> Dict[str, Any]:
-        # Build query parameters like how Windows does.
-        color = UISettings().get_color_value(UIColorType.BACKGROUND)
-        lang = locale.windows_locale[windll.kernel32.GetUserDefaultUILanguage()].lower().replace("_", "-")
-        high_contrast = AccessibilitySettings().high_contrast
-        return {
-            "ms-contrast": "high" if high_contrast else "standard",
-            "ms-lang": lang,
-            "ms-theme": "dark" if (color.g + color.r + color.b) == 0 else "light"
-        }
+    @staticmethod
+    def _build_notification_data(
+        data : dict
+    ) -> "NotificationData":
+        x = NotificationData()
+        for k, v in data.items():
+            x.values[str(k)] = str(v)
+        return x
 
 
-    def _create_temp_filesystem(self) -> TempFS:
-        if self._temp_filesystem:
-            return self._temp_filesystem
-        self._temp_filesystem = TempFS()
-        return self._temp_filesystem
+    @staticmethod
+    def _walk_elements(
+        elements : ToastElementsListType,
+    ) -> Generator[Union[ToastElement, ToastElementWalkLevelType], None, None]:
+        for i in elements:
+            if isinstance(i, list):
+                yield LEVEL_START
+                for j in Toast._walk_elements(i):
+                    yield j
+                yield LEVEL_END
+            elif not isinstance(i, ToastElement):
+                raise TypeError(
+                    f"Item must be a type of ToastElement: '{repr(i)}'"
+                )
+            else:
+                yield i
+    
 
-
-    def _close_temp_filesystem(self) -> None:
-        if self._temp_filesystem:
-            self._temp_filesystem.close()
-
-
-    def _download_media(self, remote : str, add_query_params : bool = False) -> Optional[str]:
-        # Only allow media smaller than or equal to 3 MB.
-        # https://docs.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast?tabs=uwp#adding-images
-        with httpx.stream(
-            "GET", remote, 
-            trust_env = False, follow_redirects = True, 
-            headers = {"Range": "bytes=0-3000000"}, 
-            params = None if not add_query_params else self._build_image_query_params()
-        ) as stream:
-            if not stream.is_success:
-                return
-            return self.import_media(stream.iter_bytes(1024 * 10))
+    @staticmethod
+    def elements_from_json(
+        elements : ToastElementsListJSONType
+    ):
+        for i in elements:
+            if isinstance(i, list):
+                for j in Toast.elements_from_json(i):
+                    yield j
+            else:
+                yield ToastElement._create_from_type(**i)
 
     # --------------------
     # Misc
     # --------------------
 
-    @staticmethod
-    def from_json(json : Dict[str, Any]) -> "Toast":
+    @classmethod
+    def from_json(
+        cls,
+        json : Dict[str, Any]
+    ):
         """
         Create a new Toast from a dictionary (JSON types only)
 
@@ -674,7 +917,7 @@ class Toast(ToastElementContainer):
                 Dictionary for toast data. Use "elements" key to define toast elements.
                 Element types are defined with "_type" key.
         """
-        toast = Toast(
+        toast = cls(
             duration = get_enum(ToastDuration, json.get("duration", None)),
             arguments = json.get("arguments", None),
             scenario = get_enum(ToastScenario, json.get("scenario", None)),
@@ -682,32 +925,43 @@ class Toast(ToastElementContainer):
             toast_id = str(json.get("toast_id", "")) or None,
             show_popup = bool(json.get("show_popup", True)),
             base_path = str(json.get("base_path", "")) or None,
-            timestamp = None if "timestamp" not in json else datetime.fromisoformat(json["timestamp"]),
+            timestamp = None if "timestamp" not in json else \
+                datetime.fromisoformat(json["timestamp"]),
             sound = json.get("sound", ToastSound.DEFAULT),
             sound_loop = bool(json.get("sound_loop", False)),
-            remote_images = bool(json.get("remote_images", True)),
+            remote_media = bool(json.get("remote_media", True)),
             add_query_params = bool(json.get("add_query_params", False)),
-            expiration_time = None if "expiration_time" not in json else datetime.fromisoformat(json["expiration_time"]),
+            expiration_time = None if "expiration_time" not in json else \
+                datetime.fromisoformat(json["expiration_time"]),
             app_id = str(json.get("app_id", "")) or None
         )
-        for el in json["elements"]:
-            toast.append(ToastElement._create_from_type(**el))
+        toast.elements.extend(cls.elements_from_json(json["elements"]))
         return toast
 
 
-    def copy(self) -> "Toast":
+    def copy(self):
         return self.__copy__()
 
+
     def __repr__(self) -> str:
-        return f"<{self.__class__} id={self.toast_id} group={self.group_id} elements={len(self.data)}>"
+        return (
+            "<{class_name} id={toast_id} "
+            "group={group_id} elements={elements}>"
+        ).format(
+            class_name = self.__class__.__name__,
+            toast_id = self.toast_id,
+            group_id = self.group_id,
+            elements = len(self.elements)
+        )
 
     def __del__(self):
-        self._close_temp_filesystem()
+        if self._fs:
+            self._fs.close()
 
     def __copy__(self) -> "Toast":
         x = Toast()
         for i in self.__slots__:
-            if i in ["_toast_result", "_temp_filesystem"]:
+            if i in self._exclude_copy:
                 continue
             setattr(x, i, getattr(self, i))
         return x

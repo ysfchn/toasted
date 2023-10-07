@@ -81,6 +81,7 @@ class ToastNotificationMode(Enum):
     UNRESTRICTED = 0
     PRIORITY_ONLY = 1
     ALARMS_ONLY = 2
+    FEATURE_NOT_AVAILABLE = 3
 
 
 # https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-audio#attributes

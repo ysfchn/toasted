@@ -21,44 +21,171 @@
 # SOFTWARE.
 
 __all__ = [
+    "resolve_uri",
     "xml",
     "get_enum",
     "get_windows_version",
     "ToastResult"
 ]
 
+from toasted.enums import ToastElementType, ToastDismissReason
+
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Dict, Generic, Optional, Any, Tuple, Type, List, Iterable, TypeVar, Union
-from toasted.enums import ToastElementType, ToastDismissReason
+from typing import (
+    Dict, 
+    Generic, 
+    NamedTuple, 
+    Optional, 
+    Any, 
+    Tuple, 
+    Type, 
+    List, 
+    Iterable, 
+    TypeVar, 
+    Union,
+    Literal
+)
+from os import environ, sep
 import platform
-import re
+import sys
+from urllib.parse import urlsplit, urlunsplit
+from pathlib import Path
+from base64 import b64decode
+
 
 T = TypeVar('T')
 
-SOURCE_PATTERN = re.compile(
-    # Invalid paths like 'file:///Users/test' should be flagged as absolute or relative?
-    "^(?P<remote>https?://.*)|(?:(?:ms-appx://|ms-appdata://|file://)?/?(?P<alocal>[A-Z]:/.*))|(?:\\./)?(?P<rlocal>.*)$"
-)
 
-def xml(element : str, _data : Optional[str] = None, **kwargs) -> str:
+class ToastThemeInfo(NamedTuple):
+    contrast : Literal["high", "standard"]
+    lang : str
+    theme : Literal["dark", "light"]
+
+
+def resolve_uri(
+    uri : str,
+    allow_remote : bool = False
+) -> Union[str, Path, bytes]:
+    """
+    Resolve an file system or remote URI, similar how it is done in UWP apps.
+    """
+    split = urlsplit(uri, allow_fragments = False)
+    path_part = (split.netloc + split.path).removeprefix("/")
+    # If scheme is "ms-appx", path is relative to current working directory.
+    if split.scheme == "ms-appx":
+        return Path().cwd() / path_part
+    # If scheme is "file", path is relative to system root.
+    elif split.scheme == "file":
+        return Path(sep).absolute() / path_part
+    # If scheme is "data", return bytes.
+    elif split.scheme == "data":
+        meta, data = path_part.split(",", 1)
+        _, data_type = ";" if ";" not in meta else meta.split(";", 1)
+        if data_type != "base64":
+            raise ValueError(
+                "Data URI must be in 'base64' type: \"{0}\"".format(uri)
+            )
+        return b64decode(data)
+    # If scheme is "http" or "https", left as-is.
+    elif allow_remote and (split.scheme in ["https", "http"]):
+        return urlunsplit(split)
+    # If scheme is "ms-appdata", path is relative to appdata which is based
+    # on the first part of the path ("local", "roaming" or "temp").
+    elif split.scheme == "ms-appdata":
+        if path_part.startswith("local/"):
+            return (
+                Path(environ["LOCALAPPDATA"]).resolve() / 
+                path_part.removeprefix("local/")
+            )
+        elif path_part.startswith("roaming/"):
+            return (
+                Path(environ["APPDATA"]).resolve() / "Roaming" /
+                path_part.removeprefix("roaming/")
+            )
+        elif path_part.startswith("temp/"):
+            return (
+                Path(environ["LOCALAPPDATA"]).resolve() / "Temp" /
+                path_part.removeprefix("temp/")
+            )
+    raise ValueError(
+        "Unknown or invalid URI: \"{0}\"".format(uri)
+    )
+
+
+def is_in_venv() -> bool:
+    """
+    Returns True if Python is launched in a virtualenv or similar environments.
+    Otherwise, False.
+    """
+    return bool(
+        environ.get("CONDA_PREFIX", None) or \
+        environ.get("VIRTUAL_ENV", None) or \
+        getattr(sys, "real_prefix", sys.base_prefix) != sys.prefix
+    )
+
+
+def get_theme_query_parameters(
+    info : ToastThemeInfo
+) -> Dict[str, str]:
+    """
+    Convert ToastThemeInfo object to query parameters.
+    """
+    return {
+        "ms-contrast": info.contrast,
+        "ms-lang": info.lang,
+        "ms-theme": info.theme
+    }
+
+
+def xmldata_to_content(
+    content : Union[None, str, List["XMLData"], "XMLData"]
+):
+    if not content:
+        yield None
+    elif isinstance(content, list):
+        for i in content:
+            for j in xmldata_to_content(i):
+                yield j
+    elif isinstance(content, XMLData):
+        yield "<{0}{1}>".format(content.tag, attrs_to_string(content.attrs or {}))
+        for i in xmldata_to_content(content.content):
+            yield i
+        yield "</{0}>".format(content.tag)
+    else:
+        yield content
+
+
+def attrs_to_string(
+    attrs : Dict[str, Any]
+) -> str:
     attr = ""
-    for k, v in kwargs.items():
+    for k, v in attrs.items():
         value = ""
-        if v == None:
+        if v is None:
             continue
-        if type(v) == bool:
+        if isinstance(v, bool):
             value = str(v).lower()
         elif isinstance(v, Enum):
             value = str(v.value)
         else:
             value = str(v)
         attr += " " + k.replace("_", "-") + "=\"" + value.replace("\"", "&quot;") + "\""
-    return "<" + element + attr + ">" + (_data or "") + "</" + element + ">"
+    return attr
+
+
+def xml(element : str, _data : Optional[str] = None, **kwargs) -> str:
+    return \
+        "<" + element + attrs_to_string(kwargs) + ">" + \
+        (_data or "") + \
+        "</" + element + ">"
 
 
 def get_enum(enum : Type[Enum], value : Any, default : T = None) -> Union[Enum, T]:
-    return next((y for x, y in enum._member_map_.items() if (y.value == value) or (y == value) or (x == value)), default)
+    return next(
+        (y for x, y in enum._member_map_.items() if (y.value == value) 
+        or (y == value) or (x == value)), default
+    )
 
 
 def get_windows_version() -> Tuple[float, int]:
@@ -74,11 +201,46 @@ def get_windows_version() -> Tuple[float, int]:
     return rel, bul,
 
 
+class XMLData(NamedTuple):
+    tag : str
+    content : Union[None, str, List["XMLData"], "XMLData"] = None
+    attrs : Optional[Dict[str, Any]] = None
+    source_replace : Optional[str] = None
+
+
+class ToastPayload(NamedTuple):
+    uses_custom_style : Optional[bool]
+    custom_sound_file : str
+    base_path : str
+    arguments : Optional[str]
+    duration : Optional[str]
+    scenario : Optional[str]
+    timestamp : Optional[str]
+    visual_xml : str
+    actions_xml : str
+    other_xml : str
+
+
+
+class BindingKey(str):
+    def __new__(cls, value : str):
+        if value:
+            if not isinstance(value, str):
+                raise TypeError(f"Unexpected type for binding key: {type(value)}")
+            if value.startswith("{") and value.endswith("}"):
+                pass
+            else:
+                raise ValueError(
+                    "Binding key values must start with '{' and end with '}'"
+                )
+        return super().__new__(cls, value)
+
+
 class ToastBase(ABC):
     __slots__ = ()
 
     @abstractmethod
-    def to_xml(self) -> str:
+    def to_xml_data(self) -> XMLData:
         ...
     
     @classmethod
@@ -106,16 +268,20 @@ class ToastResult:
     def __bool__(self):
         return self.is_dismissed
 
+    def __repr__(self) -> str:
+        return (
+            f'<{self.__class__.__name__} arguments="{self.arguments}" '
+            f'inputs="{self.inputs}" reason={self.dismiss_reason}>'
+        )
+
 
 class ToastElement(ToastBase):
     _registry : List[Tuple[str, "ToastElement"]] = []
     _etype : ToastElementType
-    _esources : Optional[Dict[str, Any]]
 
-    def __init_subclass__(cls, ename : str, etype : ToastElementType, esources : Optional[Dict[str, Any]] = None, **kwargs) -> None:
+    def __init_subclass__(cls, ename : str, etype : ToastElementType, **kwargs) -> None:
         super().__init_subclass__(**kwargs)
         cls._etype = etype
-        cls._esources = esources
         cls._registry.append((ename, cls, ))
 
     @classmethod
@@ -124,38 +290,15 @@ class ToastElement(ToastBase):
             if x == _type:
                 return y.from_json(kwargs)
         raise ValueError(
-            "Subgroups can't be created from root level, use \"group\" with children instead." \
-            if _type == "subgroup" else f"Element couldn't found with name \"{_type}\"."
+            f"Element couldn't found with name \"{_type}\"."
         )
 
-    def _resolve(self) -> List[Tuple[str, str, str, str]]:
-        # Toast elements produce a XML, however the output XML attribute names are not same
-        # with the class __init__ parameter names, so there is an "esources" class parameter for elements
-        # in their definitions. We need to do that to support HTTP images, because when source is 
-        # an HTTP image, we are replacing the output XML to point to the downloaded file.
-        #
-        # class Image(ToastElement, esources = {"source": "src"}):
-        #     ...
-        #
-        # "source" is attribute name, "src" is name of the attribute in output XML
-        x = []
-        if self._esources:
-            for k, v in self._esources.items():
-                match = re.match(SOURCE_PATTERN, v)
-                if not match:
-                    raise ValueError(f"Invalid path '{v}', needs to be HTTP or a file path.")
-                remote, alocal, rlocal = match.groups()
-                if remote:
-                    x.append(("REMOTE", k, v, remote))
-                elif alocal:
-                    x.append(("ALOCAL", k, v, alocal))
-                elif rlocal:
-                    x.append(("RLOCAL", k, v, rlocal))
-        return x
-
     def __repr__(self) -> str:
-        return f"<{self.__class__}>"
+        return f"<{self.__class__.__name__}>"
 
+
+"""
+TODO: Remove me
 
 class ToastGenericContainer(Generic[T], ToastBase):
     __slots__ = ("data", )
@@ -198,3 +341,4 @@ class ToastGenericContainer(Generic[T], ToastBase):
 
 class ToastElementContainer(ToastGenericContainer[ToastElement]):
     pass
+"""
