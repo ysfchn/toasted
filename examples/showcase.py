@@ -118,30 +118,34 @@ async def show_call_example(app_id : str):
             default = "q0"
         ),
         Button(
-            "Accept", 
-            arguments = "accept",
-            icon = "https://iili.io/iITa3P.png",
+            "Decline", 
+            arguments = "decline",
+            icon = "icon://U+E778",
             style = ToastButtonStyle.SUCCESS
         ),
         Button(
-            "Decline", 
-            arguments = "decline",
-            icon = "https://iili.io/iIT76B.png",
+            "Accept", 
+            arguments = "accept",
+            icon = "icon://U+E717",
             style = ToastButtonStyle.CRITICAL
-        ),
+        )
     ]
     # As explained in above, you can set callbacks to do a specific task
     # when toast has changed its state. Callbacks can also be coroutines
     # (means "async def" functions also works).
     @toast.on_shown
-    def my_handler(result : ToastResult):
+    def my_handler_1(data):
+        print("shown a toast")
+
+    @toast.on_result
+    def my_handler_2(result : ToastResult):
         if result.is_dismissed:
             print("dismissed by user")
         else:
             print("clicked!")
     # Even with and without callbacks, the show() function will
     # continue returning a ToastResult, which is the same object with
-    # the one that passed to the on_shown() handler as a parameter.
+    # the one that passed to the on_result() handler as a parameter.
     result = await toast.show()
 
 
@@ -176,4 +180,5 @@ async def show_sync_example(app_id : str):
     })
 
 if __name__ == "__main__":
+    asyncio.run(show_call_example(APP_ID))
     pass

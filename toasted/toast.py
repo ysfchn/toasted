@@ -800,7 +800,6 @@ class Toast:
             ("add_dismissed", "_handle_toast_dismissed"),
             ("add_failed", "_handle_toast_failed")
         ):
-            print(k, v)
             fut, tok = self._create_future_toast_event(
                 loop = event_loop, method_name = v, hook_name = k
             )

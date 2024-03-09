@@ -33,15 +33,13 @@ from toasted.enums import ToastElementType, ToastDismissReason
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import (
-    Dict, 
-    Generic, 
+    Dict,
     NamedTuple, 
     Optional, 
     Any, 
     Tuple, 
     Type, 
     List, 
-    Iterable, 
     TypeVar, 
     Union,
     Literal
@@ -52,6 +50,12 @@ import sys
 from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
 from base64 import b64decode
+import winreg
+import string
+from io import BytesIO
+
+from winsdk.windows.storage import SystemDataPaths
+from PIL import Image, ImageFont, ImageDraw
 
 
 T = TypeVar('T')
@@ -87,6 +91,20 @@ def resolve_uri(
                 "Data URI must be in 'base64' type: \"{0}\"".format(uri)
             )
         return b64decode(data)
+    # If scheme is "icon", extract icon from Windows icon font.
+    elif split.scheme == "icon":
+        hex_value = path_part.removeprefix("U+").removeprefix("0x")
+        hex_digits = set(string.hexdigits)
+        if not all(c in hex_digits for c in hex_value):
+            raise ValueError(
+                "Icon URI path needs to be a hexadecimal " +
+                "value of character point: \"{0}\"".format(uri)    
+            )
+        return get_icon_from_font(
+            charcode = int(hex_value, 16),
+            font_file = get_icon_font_default(),
+            in_white = False
+        )
     # If scheme is "http" or "https", left as-is.
     elif allow_remote and (split.scheme in ["https", "http"]):
         return urlunsplit(split)
@@ -199,6 +217,118 @@ def get_windows_version() -> Tuple[float, int]:
     if bul > 20000:
         rel += 1.0
     return rel, bul,
+
+
+def get_icon_from_font(
+    charcode : int,
+    font_file : Union[str, bytes],
+    icon_size : int = 64,
+    in_white : bool = True,
+    icon_format : str = "png"
+) -> bytes:
+    """
+    Create a transparent image with a character in black color
+    (or white, if "in_white" is True) from given icon font file 
+    and return the created image in given format as bytes.
+
+    Used to extract system icons from built-in Windows icon fonts
+    such as "Segoe MDL2 Assets".
+
+    https://learn.microsoft.com/en-us/windows/apps/design/style/segoe-ui-symbol-font
+    """
+    image = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    if not font_file:
+        raise ValueError("No font has provided!")
+    asset_font = ImageFont.truetype(
+        font_file, size = icon_size, 
+        layout_engine = ImageFont.Layout.BASIC
+    )
+    text_content = chr(charcode)
+    text_length = draw.textlength(text_content, asset_font)
+    # If text length exceeds the icon size, make text smaller.
+    if text_length > icon_size:
+        asset_font = asset_font.font_variant(
+            size = icon_size - ((text_length - icon_size) // 2) - (icon_size // 12)
+        )
+    # Draw text to the image.
+    draw.text(
+        xy = (icon_size // 2, icon_size // 2), text = text_content,
+        fill = (255, 255, 255, 255) if in_white else (0, 0, 0, 255),
+        font = asset_font, align = "center", anchor = "mm", spacing = 0
+    )
+    buffer = BytesIO()
+    image.save(buffer, icon_format)
+    return buffer.getvalue()
+
+
+def get_icon_fonts_path() -> List[Tuple[Literal["mdl2", "fluent"], Path]]:
+    """
+    Returns a list of file paths of Segoe MDL2 and Segoe Fluent
+    fonts from registry. MDL2 comes preinstalled in Windows 10 and onwards,
+    and Fluent is preinstalled in Windows 11 and onwards, and both of
+    these fonts can also be installed separetely.
+
+    Fluent Icons: https://aka.ms/SegoeFluentIcons
+    MDL2 Icons: https://aka.ms/segoemdl2
+    """
+    available = []
+    fonts = {
+        "mdl2": "Segoe MDL2 Assets (TrueType)",
+        "fluent": "Segoe Fluent Icons Normal (TrueType)"
+    }
+    system_fonts = winreg.OpenKey(
+        winreg.HKEY_LOCAL_MACHINE, 
+        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts"
+    )
+    user_fonts = winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER, 
+        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts"
+    )
+    system_fonts_path = Path(SystemDataPaths.get_default().fonts)
+    # Check for system fonts.
+    system_fonts_count = winreg.QueryInfoKey(system_fonts)[1]
+    for i in range(system_fonts_count):
+        name, file, _ = winreg.EnumValue(system_fonts, i)
+        for k, v in fonts.items():
+            if name == v:
+                font_path = Path(file)
+                if not font_path.is_absolute():
+                    font_path = system_fonts_path.joinpath(font_path)
+                available.append((k, font_path))
+    system_fonts.Close()
+    # Check for user fonts.
+    user_fonts_count = winreg.QueryInfoKey(user_fonts)[1]
+    for i in range(user_fonts_count):
+        name, file, _ = winreg.EnumValue(user_fonts, i)
+        for k, v in fonts.items():
+            if name == v:
+                available.append((k, Path(file)))
+    return available
+
+
+def get_windows_build() -> int:
+    """
+    Gets Windows build number.
+    """
+    return sys.getwindowsversion().build
+
+
+def get_icon_font_default() -> Path:
+    """
+    Returns the path of recommended icon font
+    to be used in toast icons.
+    """
+    fonts = dict(get_icon_fonts_path())
+    # Windows 11 comes with fluent icons by default.
+    # https://en.wikipedia.org/wiki/List_of_Microsoft_Windows_versions
+    if get_windows_build() >= 22000:
+        if "fluent" in fonts:
+            return fonts["fluent"]
+    # For Windows 10, prefer MDL2 instead.
+    if "mdl2" in fonts:
+        return fonts["mdl2"]
+    raise ValueError("Couldn't find an available icon font.")
 
 
 class XMLData(NamedTuple):
