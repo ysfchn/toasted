@@ -56,7 +56,6 @@ from typing import (
     List, Union, Literal, Set
 )
 from pathlib import Path
-from uuid import uuid4
 
 if sys.platform == "win32":
     import winreg
@@ -481,10 +480,14 @@ class Toast:
             key, "IconUri", 0, winreg.REG_SZ, 
             icon_uri
         )
-        winreg.SetValueEx(
-            key, "CustomActivator", 0, winreg.REG_SZ, 
-            "{" + str(uuid4()).upper() + "}"
-        )
+        # FIXME: 
+        # COM activator is not supported as it is rather
+        # more complex concept than WinRT.
+        #
+        # winreg.SetValueEx(
+        #     key, "CustomActivator", 0, winreg.REG_SZ, 
+        #     "{" + str(uuid4()).upper() + "}"
+        # )
         winreg.SetValueEx(
             key, "ShowInSettings", 0, winreg.REG_DWORD, 
             int(show_in_settings)

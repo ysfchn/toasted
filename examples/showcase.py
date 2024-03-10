@@ -1,12 +1,17 @@
-from toasted import Toast, Text, ToastTextStyle, Image, Button, ToastImagePlacement, Progress
-from toasted.common import ToastResult, is_in_venv
+from toasted import (
+    Toast, Text, ToastTextStyle, 
+    Image, Button, ToastImagePlacement, 
+    Progress, ToastResult, ToastScenario
+)
+from toasted.common import is_in_venv
+from toasted.elements import Select
+from toasted.enums import ToastButtonStyle
+
 import asyncio
 import warnings
-from toasted.elements import Select
-
-from toasted.enums import ToastButtonStyle, ToastScenario
 
 APP_ID = "Foo.Bar.App"
+# APP_ID = "Microsoft.Windows.Explorer"
 
 def warn_if_not_registered(app_id : str):
     # TODO: move that to the library instead.
@@ -92,6 +97,7 @@ async def show_parcel_example(app_id : str):
     # You can also use toast.on_shown() and toast.on_result() callbacks,
     # which is shown in the next example.
     result = await toast.show()
+    print(result)
 
 
 async def show_call_example(app_id : str):
@@ -139,14 +145,11 @@ async def show_call_example(app_id : str):
 
     @toast.on_result
     def my_handler_2(result : ToastResult):
-        if result.is_dismissed:
-            print("dismissed by user")
-        else:
-            print("clicked!")
+        print(result)
     # Even with and without callbacks, the show() function will
     # continue returning a ToastResult, which is the same object with
     # the one that passed to the on_result() handler as a parameter.
-    result = await toast.show()
+    await toast.show()
 
 
 async def show_sync_example(app_id : str):
@@ -178,7 +181,9 @@ async def show_sync_example(app_id : str):
         "value": 75 / 100,
         "status": "Uploading..."
     })
+    print(result)
 
 if __name__ == "__main__":
-    asyncio.run(show_call_example(APP_ID))
+    # Toast.register_app_id(APP_ID, "FooBar")
+    asyncio.run(show_parcel_example(APP_ID))
     pass

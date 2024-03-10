@@ -72,7 +72,8 @@ class Text(ToastElement, etype = ToastElementType.VISUAL, ename = "text"):
         is_center:
             Set to True to center the text for incoming call notifications. 
             This value is only used for notifications with with a scenario value of 
-            INCOMING_CALL; otherwise, it is ignored.
+            INCOMING_CALL; otherwise, it is ignored. It seems to only works in
+            Windows 11.
         max_lines:
             Gets or sets the maximum number of lines the text element is allowed 
             to display.
