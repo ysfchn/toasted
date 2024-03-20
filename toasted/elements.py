@@ -147,9 +147,10 @@ class Image(ToastElement, etype = ToastElementType.VISUAL, ename = "image"):
         alt:
             A description of the image, for users of assistive technologies.
         placement:
-            The placement of the image. 
-            LOGO: The image replaces your app's logo in the toast notification.,
-            HERO: The image is displayed as a hero image. 
+            The placement of the image.
+            LOGO: The image is displayed as a logo at left,
+            HERO: The image is displayed as a hero image,
+            None or default value: The image is displayed inside the toast.
         is_circle:
             If True, the image is cropped into a circle.
     """
@@ -264,10 +265,13 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
             The button style.
         tooltip:
             The tooltip for a button, if the button has an empty content string.
+        is_protocol:
+            If True, launch an application or visit a link when this button 
+            has clicked. To make it work, also specify a URI in "arguments" parameter.
     """
     __slots__ = (
         "content", "arguments", "is_context", "icon", 
-        "input_id", "style", "tooltip", 
+        "input_id", "style", "tooltip", "is_protocol",
     )
 
     def __init__(
@@ -278,7 +282,8 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
         icon : Optional[str] = None,
         input_id : Optional[str] = None,
         style : Optional[ToastButtonStyle] = None,
-        tooltip : Optional[str] = None
+        tooltip : Optional[str] = None,
+        is_protocol : bool = False
     ) -> None:
         self.content = content
         self.arguments = arguments
@@ -287,6 +292,7 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
         self.input_id = input_id
         self.style = style
         self.tooltip = tooltip
+        self.is_protocol = is_protocol
 
     @classmethod
     def from_json(cls, data: Dict[str, Any]):
@@ -300,15 +306,17 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
             attrs = {
                 "content": self.content,
                 "arguments": self.arguments,
-                "activationType": "foreground", 
+                "activationType": "foreground" if not self.is_protocol else "protocol", 
                 "placement": "contextMenu" if self.is_context else None,
                 "imageUri": self.icon,
                 "hint-inputId": self.input_id,
                 "hint-buttonStyle": self.style,
-                "hint-toolTip": self.tooltip
+                "hint-toolTip": self.tooltip,
+                "afterActivationBehavior": "pendingUpdate"
                 # Unsupported options:
                 # - protocolActivationTargetApplicationPfn
                 # - afterActivationBehavior = "pendingUpdate"
+                #     (activationType must be "background")
             },
             source_replace = "imageUri"
         )

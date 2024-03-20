@@ -47,7 +47,7 @@ from typing import (
 from os import environ, sep
 import platform
 import sys
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, parse_qsl
 from pathlib import Path
 from base64 import b64decode
 import winreg
@@ -55,7 +55,7 @@ import string
 from io import BytesIO
 
 from winsdk.windows.storage import SystemDataPaths
-from PIL import Image, ImageFont, ImageDraw
+from PIL import Image, ImageFont, ImageDraw, ImageColor
 
 
 T = TypeVar('T')
@@ -93,6 +93,7 @@ def resolve_uri(
         return b64decode(data)
     # If scheme is "icon", extract icon from Windows icon font.
     elif split.scheme == "icon":
+        values = dict(parse_qsl(split.query))
         hex_value = path_part.removeprefix("U+").removeprefix("0x")
         hex_digits = set(string.hexdigits)
         if not all(c in hex_digits for c in hex_value):
@@ -103,7 +104,9 @@ def resolve_uri(
         return get_icon_from_font(
             charcode = int(hex_value, 16),
             font_file = get_icon_font_default(),
-            in_white = False
+            foreground = ImageColor.getrgb(values.get("foreground", None) or "#000000FF"),  # noqa: E501
+            background = ImageColor.getrgb(values.get("background", None) or "#00000000"),
+            icon_padding = int(values.get("padding", None) or 0)
         )
     # If scheme is "http" or "https", left as-is.
     elif allow_remote and (split.scheme in ["https", "http"]):
@@ -223,7 +226,9 @@ def get_icon_from_font(
     charcode : int,
     font_file : Union[str, bytes],
     icon_size : int = 64,
-    in_white : bool = True,
+    icon_padding : int = 0,
+    background : "Image._Color" = (0, 0, 0, 0),
+    foreground : "Image._Color" = (255, 255, 255, 255),
     icon_format : str = "png"
 ) -> bytes:
     """
@@ -236,7 +241,8 @@ def get_icon_from_font(
 
     https://learn.microsoft.com/en-us/windows/apps/design/style/segoe-ui-symbol-font
     """
-    image = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
+    image_size = icon_size + icon_padding
+    image = Image.new("RGBA", (image_size, image_size), background)
     draw = ImageDraw.Draw(image)
     if not font_file:
         raise ValueError("No font has provided!")
@@ -253,9 +259,9 @@ def get_icon_from_font(
         )
     # Draw text to the image.
     draw.text(
-        xy = (icon_size // 2, icon_size // 2), text = text_content,
-        fill = (255, 255, 255, 255) if in_white else (0, 0, 0, 255),
-        font = asset_font, align = "center", anchor = "mm", spacing = 0
+        xy = (image_size // 2, image_size // 2), text = text_content,
+        fill = foreground, font = asset_font, align = "center", 
+        anchor = "mm", spacing = 0
     )
     buffer = BytesIO()
     image.save(buffer, icon_format)

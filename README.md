@@ -98,11 +98,18 @@ This is useful for updating toast progress bars without displaying a new toast f
 
 Notification elements and their properties can be imported with dictionaries (JSON-accepted types) with `Toast.from_json()`, so you can add more than one element by calling a single method. See example JSON configurations [here.](examples)
 
+## Unimplemented features
+
+* [Collections](https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/toast-collections)
+* [Pending updates (background events)](https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/toast-pending-update?tabs=builder-syntax), seems to require a COM server.
+
 ## Building
 
 ```
 python -m pip wheel .
 ```
+
+Or if you use [rye](https://rye-up.com/), `rye build`.
 
 ## License
 
