@@ -2,16 +2,15 @@
 
 Yet another notifications library for Windows, written in Python, built using Windows Runtime APIs (WinRT).
 
-Compared to other toast libraries, Toasted supports all notification elements provided by Windows, such as; inputs, selects, buttons, images, different text styles, so you are not just limited to single line of text.
+Compared to other toast libraries, Toasted supports all notification elements provided by Windows, such as; inputs, selects, buttons, images, different text styles... so you are not just limited to single line of text.
 
-Since Windows restricts use of some features of toast notifications in unpackaged non-UWP apps, Toasted also handles this cases _in the best way possible_ to mimic the behaviour of UWP apps, for example; HTTP images are first downloaded to a temporary directory and then used as a local file, special URIs like `ms-appx://` are supported, Windows system icons can be used as an image/icon source.
-
-It works on Windows 10 and up, though outdated/initial builds of Windows 10 may not work as it doesn't include all Notification APIs used in the library. 
+Since Windows **restricts use of some features of toast notifications in unpackaged non-UWP apps**, Toasted also handles this cases _in the best way possible_ to mimic the behaviour of UWP apps, for example; HTTP(S) URIs are first downloaded to a temporary directory and then used as a local file, Windows URIs like `ms-appx` and `ms-appdata` are set relative to special directories [and so on.](#special-behaviours)
 
 ![](.github/assets/preview.png)
 
-> [!IMPORTANT]
-> I'm using Linux in my daily life, and the reason why I created this library even I use Linux is that I started working on this library before my switch to Linux. And since I worked much (and would like to improve more), I simply don't want to deprecate the library, so I currently use a separate Windows device to develop Toasted on, which may affect my development time. So while I'm trying to do my best and keep the library updated, do not expect regular updates.
+It works on Windows 10 and up, though outdated/initial builds of Windows 10 may not work as it doesn't include all Notification APIs used in the library. 
+
+> I'm using Linux in my daily life, and the reason why I created this library even I use Linux is that I started working on this library before my switch to Linux. So I currently use a separate Windows device to develop Toasted on, which may affect my development time. Therefore, while I'm trying to do my best and keep the library updated, do not expect regular updates.
 
 If other systems would provide APIs and features to create rich libraries as on Windows, I would have love to add support for other systems, but as the library is focusing/relying on Windows APIs more in each update, it is not possible to make it cross-platform at the moment.
 

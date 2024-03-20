@@ -21,8 +21,8 @@ requires-python = ">=3.9"
 packages = ["toasted"]
 
 [project.urls]
-"Source Code" = "https://github.com/ysfchn/toasted"
-"Donate" = "https://github.com/sponsors/ysfchn"
+"GitHub" = "https://github.com/ysfchn/toasted"
+"Sponsor" = "https://github.com/sponsors/ysfchn"
 
 [tool.rye]
 dev-dependencies = [
