@@ -392,10 +392,7 @@ class Toast:
             arguments = self.arguments,
             duration = None if not self.duration else self.duration.value,
             scenario = None if not self.scenario else self.scenario.value,
-            timestamp = (
-                None if not self.timestamp 
-                else self.timestamp.isoformat()
-            ),
+            timestamp = (None if not self.timestamp else self.timestamp.isoformat()),
             visual_xml = visual,
             actions_xml = actions,
             other_xml = other
@@ -480,14 +477,6 @@ class Toast:
             key, "IconUri", 0, winreg.REG_SZ, 
             icon_uri
         )
-        # FIXME: 
-        # COM activator is not supported as it is rather
-        # more complex concept than WinRT.
-        #
-        # winreg.SetValueEx(
-        #     key, "CustomActivator", 0, winreg.REG_SZ, 
-        #     "{" + str(uuid4()).upper() + "}"
-        # )
         winreg.SetValueEx(
             key, "ShowInSettings", 0, winreg.REG_DWORD, 
             int(show_in_settings)
@@ -650,21 +639,21 @@ class Toast:
     def update(
         self,
         data : ToastDataType,
-        silent : bool = False
+        missing_ok : bool = False
     ) -> bool:
         """
         Updates the notification without showing a new one. Used for changing dynamic
-        values (a.k.a. binding values). You won't need this method if you don't use any 
-        binding values. Returns True if succeded (always True if silent is False).
+        values (a.k.a. binding values). You probably won't need this method if you 
+        don't use any binding values. Returns True if succeded.
 
         Parameters:
             data:
                 Dictionary of binding keys and their values to replace with.
                 See also show() method to set initial values of binding keys before 
                 showing the toast.
-            silent:
+            missing_ok:
                 If True, no exceptions will be raised when notification was not found 
-                (user has deleted the notification). Defaults to False.
+                (e.g. user has deleted the notification). Defaults to False.
         """
         notifdata = self._build_notification_data(data)
         update_result = None
@@ -679,7 +668,7 @@ class Toast:
         else:
             update_result = self._imp_manager.update(notifdata, self.toast_id).value
         if update_result != 0:
-            if not silent:
+            if not missing_ok:
                 raise Exception(
                     "Failed to update the notification; " + (
                         "notification has not found." if update_result == 2 else
@@ -692,30 +681,31 @@ class Toast:
     async def show(
         self,
         data : Optional[ToastDataType] = None,
-        override_mute : bool = False
+        mute_sound : bool = False
     ) -> ToastResult:
         """
         Shows the notification. If there is any {binding} key, you can give a "data" 
         dictionary to replace binding keys with their values. You can also 
-        "override_mute" to mute notification sound regardless of 
-        "sound" attribute of this toast. 
+        "mute_sound" to mute notification sound regardless of "sound" attribute 
+        of this toast. 
 
         Parameters:
             data:
                 Dictionary of binding keys and their initial values to replace with.
                 See also update() method to update binding keys after showing the toast.
-            override_mute:
-                Mute the sound of this notification, if set any. Can be useful if you 
+            mute_sound:
+                Mute the sound of this notification, if set before. Useful if you 
                 want to show same toast but want to mute sound to prevent repetitive 
-                notification sounds without needing to change Toast.sound attribute.
+                notification sounds without needing to change Toast.sound attribute for
+                each time.
         """
         event_loop, futures, tokens, custom_sound = self._set_toast_manager(
-            override_mute, data
+            mute_sound, data
         )
         self._imp_manager.show(self._imp_toast)
         # If sound is custom, play with winsound.
         if custom_sound:
-            if override_mute:
+            if mute_sound:
                 winsound.PlaySound(None, 4)
             else:
                 winsound.PlaySound(
@@ -769,7 +759,7 @@ class Toast:
 
     def _set_toast_manager(
         self,
-        override_mute : bool = False,
+        mute_sound : bool = False,
         data : Optional[ToastDataType] = None
     ) -> Tuple[
         asyncio.AbstractEventLoop, 
@@ -779,7 +769,7 @@ class Toast:
     ]:
         self._imp_manager = ToastNotificationManager.create_toast_notifier(self.app_id)
         event_loop = asyncio.get_running_loop()
-        self._xml_mute_sound = override_mute
+        self._xml_mute_sound = mute_sound
         xml = dom.XmlDocument()
         payload = self.get_payload(download_media = True)
         xml.load_xml(self._payload_to_xml_string(payload))

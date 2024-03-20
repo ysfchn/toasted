@@ -104,8 +104,8 @@ def resolve_uri(
         return get_icon_from_font(
             charcode = int(hex_value, 16),
             font_file = get_icon_font_default(),
-            foreground = ImageColor.getrgb(values.get("foreground", None) or "#000000FF"),  # noqa: E501
-            background = ImageColor.getrgb(values.get("background", None) or "#00000000"),
+            foreground = ImageColor.getrgb(values.get("foreground", None) or "#000000FF"), # noqa: E501
+            background = ImageColor.getrgb(values.get("background", None) or "#00000000"), # noqa: E501
             icon_padding = int(values.get("padding", None) or 0)
         )
     # If scheme is "http" or "https", left as-is.
@@ -137,7 +137,11 @@ def resolve_uri(
 def is_in_venv() -> bool:
     """
     Returns True if Python is launched in a virtualenv or similar environments.
-    Otherwise, False.
+    Otherwise, False. This check is required because since in virtual environment,
+    there will be no Python installed on the system, toast notifications will fail
+    to display as toast notification default app ID is set to sys.executable.
+
+    TODO: Unused right now.
     """
     return bool(
         environ.get("CONDA_PREFIX", None) or \
@@ -232,8 +236,7 @@ def get_icon_from_font(
     icon_format : str = "png"
 ) -> bytes:
     """
-    Create a transparent image with a character in black color
-    (or white, if "in_white" is True) from given icon font file 
+    Create a image with a character from given icon font file 
     and return the created image in given format as bytes.
 
     Used to extract system icons from built-in Windows icon fonts
@@ -431,50 +434,3 @@ class ToastElement(ToastBase):
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}>"
-
-
-"""
-TODO: Remove me
-
-class ToastGenericContainer(Generic[T], ToastBase):
-    __slots__ = ("data", )
-
-    def __init__(self) -> None:
-        self.data : List[T] = []
-
-    def append(self, element : T) -> None:
-        self.data.append(element)
-
-    def remove(self, element : T) -> None:
-        self.data.remove(element)
-
-    def pop(self, index : int = -1) -> T:
-        return self.data.pop(index)
-
-    def clear(self) -> None:
-        return self.data.clear()
-
-    def insert(self, index : int, element : T) -> None:
-        self.data.insert(index, element)
-
-    def extend(self, other : Iterable[T]):
-        self.data.extend(other)
-
-    def __len__(self) -> int:
-        return len(self.data)
-
-    def __iadd__(self, other : T):
-        self.append(other)
-        return self
-
-    def __imul__(self, other : T):
-        self.remove(other)
-        return self
-
-    def __iter__(self) -> T:
-        return iter(self.data)
-
-
-class ToastElementContainer(ToastGenericContainer[ToastElement]):
-    pass
-"""

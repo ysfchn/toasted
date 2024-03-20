@@ -3,23 +3,17 @@ from toasted import (
     Image, Button, ToastImagePlacement, 
     Progress, ToastResult, ToastScenario
 )
-from toasted.common import is_in_venv
 from toasted.elements import Select
 from toasted.enums import ToastButtonStyle
 
 import asyncio
-import warnings
 
-APP_ID = "Foo.Bar.App"
-# APP_ID = "Microsoft.Windows.Explorer"
+APP_ID = "Microsoft.Windows.Explorer"
 
-def warn_if_not_registered(app_id : str):
-    # TODO: move that to the library instead.
-    if is_in_venv() and (not Toast.is_registered_app_id(app_id)):
-        warnings.warn(
-            "Running in a virtualenv, therefore an app ID must be registered "
-            "to Windows Registry to show toasts. Run 'Toast.register_app_id()'"
-        )
+# APP_ID = "Foo.Bar.App"
+#
+# To use a custom app ID, you need to register it first with
+# Toast.register_app_id().
 
 async def show_parcel_example(app_id : str):
     toast = Toast(
@@ -30,11 +24,11 @@ async def show_parcel_example(app_id : str):
         remote_media = True
     )
     toast.elements = [
-        Text("Parcel Track"),
-        Text("Your parcel is on the way!"),
+        Text("Out for delivery"),
+        Text("Courier will arrive to your doorstep soon!"),
         Image("https://iili.io/J2vidJf.jpg"),
         # Groups and subgroups are defined as lists.
-        # Groups can only contain subgroups (meaning you can't add elements in group-level), 
+        # Groups can only contain subgroups (so you can't add elements in first-level), 
         # and subgroups can only contain Text and Image elements.
         [
             [
@@ -112,11 +106,11 @@ async def show_call_example(app_id : str):
         # the other properties of them.
         Text("Benjamin", is_center = True),
         Text("Incoming call", is_center = True),
-        Image("https://iili.io/J28vYGf.png", is_circle = True),
+        Image("https://iili.io/JXeSMtj.png", is_circle = True),
         Select(
             id = "select",
             options = {
-                "q0": "Reject with a message...",
+                "q0": "Decline with a canned reply",
                 "q1": "Can you call back later?",
                 "q2": "I'll call you back.",
                 "q3": "Please text me."
@@ -152,7 +146,7 @@ async def show_call_example(app_id : str):
     await toast.show()
 
 
-async def show_sync_example(app_id : str):
+async def show_file_example(app_id : str):
     toast = Toast(
         app_id = app_id,
         # An arbitrary string which will be passed to the ToastResult
@@ -162,28 +156,90 @@ async def show_sync_example(app_id : str):
         arguments = "click"
     )
     toast.elements = [
-        Image("https://iili.io/J286BDB.png", placement = ToastImagePlacement.HERO),
-        Text("Cloud Sync"),
-        Text("Syncing your files..."),
-        # To set a "binding"/"dynamic" value which can be changed
-        # during the lifecycle of your application, use a string value
+        Image("https://iili.io/JXeLQJR.png", placement = ToastImagePlacement.HERO),
+        Text("Saving album"),
+        Text("Amy shared \"Caturday\""),
+        # To set a "binding" value which can be changed during 
+        # the lifecycle of your application, use a string value
         # which is surrounded with curly braces ("{" and "}").
+        # This is a feature provided by Windows, so it may not apply in 
+        # everywhere, such as in "display_value", we write the value manually 
+        # in the element itself instead of passing the value later.
         Progress(
             value = "{value}",
             status = "{status}",
-            title = "Photos/landscape.png",
-            display_value = "{value} @ 1.4 MB/s"
+            title = "IMG-12_09_2020.jpg",
+            display_value = "75% @ 1.4 MB/s"
+        ),
+        # You may also want to launch an application or visit a link
+        # when this button has clicked by specifying a URI in 
+        # "arguments" and setting "is_protocol" to True.
+        #
+        # For example, this button will open About tab in Settings 
+        # app when it has clicked. You will still receive a ToastResult
+        # object for this button. 
+        Button(
+            content = "Show details",
+            arguments = "ms-settings:about",
+            is_protocol = True
         )
     ]
     # Then, you can set these values by providing 
     # a dictionary in show() method.
     result = await toast.show({
         "value": 75 / 100,
-        "status": "Uploading..."
+        "status": "4 of 9"
     })
     print(result)
 
+
+async def show_battery_example(app_id : str):
+    toast = Toast(
+        app_id = app_id
+    )
+    toast.elements = [
+        Image("icon://EBB5?foreground=#FFFFFF&background=#F7630C&padding=40",
+            placement = ToastImagePlacement.LOGO
+        ),
+        Text("Fully charged"),
+        Text("100%"),
+        Text("in 1 hr 45 min")
+    ]
+    await toast.show()
+
+
+async def show_typography_example(app_id : str):
+    toast = Toast(
+        app_id = app_id
+    )
+    toast.elements = [
+        Text("First line becomes bold"),
+        Text("Up to 3 lines can be added"),
+        Text("To add more use groups"),
+        [
+            [
+                Text("H1", style = ToastTextStyle.HEADER),
+                Text("H2", style = ToastTextStyle.SUBHEADER),
+                Text("H3", style = ToastTextStyle.TITLE),
+                Text("H4", style = ToastTextStyle.SUBTITLE),
+                Text("H5", style = ToastTextStyle.BASE),
+                Text("H6", style = ToastTextStyle.BODY),
+                Text("Text")
+            ],
+            [
+                Text("H1", style = ToastTextStyle.HEADERSUBTLE),
+                Text("H2", style = ToastTextStyle.SUBHEADERSUBTLE),
+                Text("H3", style = ToastTextStyle.TITLESUBTLE),
+                Text("H4", style = ToastTextStyle.SUBTITLESUBTLE),
+                Text("H5", style = ToastTextStyle.BASESUBTLE),
+                Text("H6", style = ToastTextStyle.BODYSUBTLE),
+                Text("Text")
+            ] 
+        ]
+    ]
+    await toast.show()
+
+
 if __name__ == "__main__":
-    # Toast.register_app_id(APP_ID, "FooBar")
     asyncio.run(show_parcel_example(APP_ID))
     pass
