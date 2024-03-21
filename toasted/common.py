@@ -24,7 +24,6 @@ __all__ = [
     "resolve_uri",
     "xml",
     "get_enum",
-    "get_windows_version",
     "ToastResult"
 ]
 
@@ -45,7 +44,6 @@ from typing import (
     Literal
 )
 from os import environ, sep
-import platform
 import sys
 from urllib.parse import urlsplit, urlunsplit, parse_qsl
 from pathlib import Path
@@ -139,11 +137,13 @@ def resolve_uri(
 def is_in_venv() -> bool:
     """
     Returns True if Python is launched in a virtualenv or similar environments.
-    Otherwise, False. This check is required because since in virtual environment,
-    there will be no Python installed on the system, toast notifications will fail
-    to display as toast notification default app ID is set to sys.executable.
+    Otherwise, False. 
+    
+    This check is required because since in virtual environment, there will be 
+    no Python installed on the system, toast notifications will fail to display 
+    as toast notification default app ID is set to sys.executable.
 
-    TODO: Unused right now.
+    TODO: Maybe add this check before showing a toast?
     """
     return bool(
         environ.get("CONDA_PREFIX", None) or \
@@ -213,19 +213,6 @@ def get_enum(enum : Type[Enum], value : Any, default : T = None) -> Union[Enum, 
         (y for x, y in enum._member_map_.items() if (y.value == value) 
         or (y == value) or (x == value)), default
     )
-
-
-def get_windows_version() -> Tuple[float, int]:
-    ver = platform.version()
-    if not ver.replace(".", "").isnumeric():
-        raise ValueError(f"Invalid Windows version: {ver}")
-    rel, bul = ver.rsplit(".", 1)
-    rel = float(rel)
-    bul = int(bul)
-    # If build is above 20000, then we are in Windows 11.
-    if bul > 20000:
-        rel += 1.0
-    return rel, bul,
 
 
 def get_icon_from_font(
@@ -344,6 +331,7 @@ def get_query_app_ids(is_user : bool = True) -> Dict[str, Dict[str, Any]]:
 def get_windows_build() -> int:
     """
     Gets Windows build number.
+    https://en.wikipedia.org/wiki/List_of_Microsoft_Windows_versions
     """
     return sys.getwindowsversion().build
 
@@ -355,7 +343,6 @@ def get_icon_font_default() -> Path:
     """
     fonts = dict(get_icon_fonts_path())
     # Windows 11 comes with fluent icons by default.
-    # https://en.wikipedia.org/wiki/List_of_Microsoft_Windows_versions
     if get_windows_build() >= 22000:
         if "fluent" in fonts:
             return fonts["fluent"]

@@ -50,7 +50,7 @@ class History:
         """
         Removes a (one) toast by its ID, group ID and app ID from history.
         """
-        ToastNotificationManager.get_default().history.remove(toast_id, group_id, app_id)
+        ToastNotificationManager.get_default().history.remove(toast_id, group_id, app_id) # noqa: E501
 
     @staticmethod
     def remove_group(group_id : str, app_id : str):

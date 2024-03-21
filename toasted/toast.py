@@ -27,10 +27,10 @@ from toasted.common import (
     ToastPayload,
     ToastThemeInfo,
     get_enum,
-    get_query_app_ids, 
+    get_query_app_ids,
+    get_windows_build, 
     xml, 
-    ToastResult, 
-    get_windows_version, 
+    ToastResult,
     resolve_uri,
     get_theme_query_parameters,
     xmldata_to_content,
@@ -790,9 +790,8 @@ class Toast:
         if data:
             self._imp_toast.data = self._build_notification_data(data)
         if self.group_id:
-            release, _ = get_windows_version()
-            # TODO: Looks like groups doesn't work in Windows 11.
-            if release != 11:
+            # TODO: Toast groups doesn't seem to supported on Windows 11.
+            if get_windows_build() >= 22000:
                 self._imp_toast.group = self.group_id
         if self.toast_id:
             self._imp_toast.tag = self.toast_id
