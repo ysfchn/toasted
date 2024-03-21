@@ -1,3 +1,25 @@
+# MIT License
+# 
+# Copyright (c) 2022 ysfchn
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 __all__ = [
     "Text",
     "Image",
@@ -5,12 +27,14 @@ __all__ = [
     "Button",
     "Header",
     "Input",
-    "Select",
-    "Group",
-    "Subgroup"
+    "Select"
 ]
 
-from toasted.common import ToastElement, xml, get_enum, ToastElementContainer
+from toasted.common import (
+    ToastElement, 
+    XMLData,
+    get_enum
+)
 from toasted.enums import (
     ToastElementType, 
     ToastTextAlign, 
@@ -18,9 +42,9 @@ from toasted.enums import (
     ToastButtonStyle, 
     ToastImagePlacement
 )
-from typing import Optional, Dict, Any, List, Type, Union
+from typing import Optional, Dict, Any, Union
 
-class Text(ToastElement):
+class Text(ToastElement, etype = ToastElementType.VISUAL, ename = "text"):
     """
     Specifies text used in the toast template.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-text
@@ -40,23 +64,28 @@ class Text(ToastElement):
             Only works for text elements inside a group/subgroup.
         is_attribution:
             The placement of the text. Introduced in Anniversary Update. 
-            If you set to True, the text is always displayed at the bottom of your notification, 
-            along with your app's identity or the notification's timestamp. 
-            On older versions of Windows that don't support attribution text, 
-            the text will simply be displayed as another text element 
+            If you set to True, the text is always displayed at the bottom of your 
+            notification, along with your app's identity or the notification's 
+            timestamp. On older versions of Windows that don't support attribution 
+            text, the text will simply be displayed as another text element 
             (assuming you don't already have the maximum of three text elements). 
         is_center:
             Set to True to center the text for incoming call notifications. 
-            This value is only used for notifications with with a scenario value of INCOMING_CALL; 
-            otherwise, it is ignored.
+            This value is only used for notifications with with a scenario value of 
+            INCOMING_CALL; otherwise, it is ignored. It seems to only works in
+            Windows 11.
         max_lines:
-            Gets or sets the maximum number of lines the text element is allowed to display.
+            Gets or sets the maximum number of lines the text element is allowed 
+            to display.
         min_lines:
             Gets or sets the minimum number of lines the text element must display. 
             This property will only take effect if the text is inside an subgroup.
     """
-
-    ELEMENT_TYPE = ToastElementType.VISUAL
+    __slots__ = (
+        "content", "id", "style", "align", 
+        "is_attribution", "is_center", "max_lines", 
+        "min_lines", 
+    )
 
     def __init__(
         self, 
@@ -70,7 +99,7 @@ class Text(ToastElement):
         min_lines : Optional[int] = None
     ) -> None:
         self.content = content
-        self.id = None if id == None else int(id)
+        self.id = None if id is None else int(id)
         self.is_attribution = is_attribution
         self.is_center = is_center
         self.style = style
@@ -85,29 +114,32 @@ class Text(ToastElement):
         x.align = get_enum(ToastTextAlign, data.get("align", None))
         return x
 
-    def to_xml(self) -> str:
-        return xml(
-            "text", 
-            self.content, 
-            id = self.id,
-            placement = "attribution" if self.is_attribution else None,
-            hint_callScenarioCenterAlign = True if self.is_center else None,
-            hint_align = self.align,
-            hint_style = self.style,
-            hint_maxLines = self.max_lines,
-            hint_minLines = self.min_lines
+    def to_xml_data(self) -> XMLData:
+        return XMLData(
+            tag = "text", 
+            content = self.content,
+            attrs = {
+                "id": self.id,
+                "placement": "attribution" if self.is_attribution else None,
+                "hint-callScenarioCenterAlign": True if self.is_center else None,
+                "hint-align": self.align,
+                "hint-style": self.style,
+                "hint-maxLines": self.max_lines,
+                "hint-minLines": self.min_lines
+            }
         )
 
 
-class Image(ToastElement):
+class Image(ToastElement, etype = ToastElementType.VISUAL, ename = "image"):
     """
     Specifies an image used in the toast template.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-image
 
     Args:
         source:
-            The URI of the image source (http(s):// is supported when "remote_images" has enabled
-            on Toast objects - which is default, otherwise only file paths can be used).
+            The URI of the image source (http(s):// is supported when "remote_images" 
+            has enabled on Toast objects - which is default, otherwise only file paths 
+            can be used).
         id:
             The image element in the toast template that this image is intended for. 
             If a template has only one image, then this value is 1. 
@@ -115,25 +147,25 @@ class Image(ToastElement):
         alt:
             A description of the image, for users of assistive technologies.
         placement:
-            The placement of the image. 
-            LOGO: The image replaces your app's logo in the toast notification.,
-            HERO: The image is displayed as a hero image. 
+            The placement of the image.
+            LOGO: The image is displayed as a logo at left,
+            HERO: The image is displayed as a hero image,
+            None or default value: The image is displayed inside the toast.
         is_circle:
             If True, the image is cropped into a circle.
     """
-
-    ELEMENT_TYPE = ToastElementType.VISUAL
+    __slots__ = ("source", "id", "alt", "placement", "is_circle", )
 
     def __init__(
         self, 
-        source : str, 
+        source : str,
         id : Optional[int] = None,
         alt : Optional[str] = None,
         placement : Optional[ToastImagePlacement] = None,
         is_circle : bool = False
     ) -> None:
         self.source = source
-        self.id = None if id == None else int(id)
+        self.id = None if id is None else int(id)
         self.alt = alt
         self.placement = placement
         self.is_circle = is_circle
@@ -144,41 +176,46 @@ class Image(ToastElement):
         x.placement = get_enum(ToastImagePlacement, data.get("placement", None))
         return x
 
-    def to_xml(self) -> str:
-        return xml(
-            "image", 
-            id = self.id,
-            src = self.source,
-            alt = self.alt,
-            placement = self.placement,
-            hint_crop = "circle" if self.is_circle else None
+    def to_xml_data(self) -> XMLData:
+        return XMLData(
+            tag = "image",
+            attrs = {
+                "id": self.id,
+                "src": self.source,
+                "alt": self.alt,
+                "placement": self.placement,
+                "hint-crop": "circle" if self.is_circle else None
+            },
+            source_replace = "src"
         )
 
 
-class Progress(ToastElement):
+class Progress(ToastElement, etype = ToastElementType.VISUAL, ename = "progress"):
     """
-    Specifies a progress bar for a toast notification. Only supported on toasts on Desktop, build 15063 or later.
+    Specifies a progress bar for a toast notification. Only supported on toasts on 
+    Desktop, build 15063 or later.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-progress
 
     Args:
         value:
-            The value of the progress bar. This value either be a float between 0 and 1 (inclusive)
-            or "indeterminate", which results in a loading animation.
+            The value of the progress bar. This value either be a float between 0 
+            and 1 (inclusive) or -1 (indeterminate), which results in a 
+            loading animation.
         status:
             A status string that is displayed underneath the progress bar on the left. 
-            This string should reflect the status of the operation, like "Downloading..." or "Installing..."
+            This string should reflect the status of the operation, like 
+            "Downloading..." or "Installing..."
         title:
             An optional title string.
         display_value:
-            An optional string to be displayed instead of the default percentage string. 
-            If this isn't provided, something like "70%" will be displayed.
+            An optional string to be displayed instead of the default percentage 
+            string. If this isn't provided, something like "70%" will be displayed.
     """
-
-    ELEMENT_TYPE = ToastElementType.VISUAL
+    __slots__ = ("value", "status", "title", "display_value", )
 
     def __init__(
         self, 
-        value : Union[str, int],
+        value : Union[str, float],
         status : Optional[str] = None,
         title : Optional[str] = None,
         display_value : Optional[str] = None
@@ -188,17 +225,19 @@ class Progress(ToastElement):
         self.title = title
         self.display_value = display_value
 
-    def to_xml(self) -> str:
-        return xml(
-            "progress", 
-            title = self.title,
-            value = self.value,
-            status = self.status or " ",
-            valueStringOverride = self.display_value
+    def to_xml_data(self) -> XMLData:
+        return XMLData(
+            tag = "progress",
+            attrs = {
+                "title": self.title,
+                "value": "indeterminate" if (self.value == -1) else self.value,
+                "status": self.status or " ",
+                "valueStringOverride": self.display_value
+            }
         )
 
 
-class Button(ToastElement):
+class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
     """
     Specifies a button shown in a toast.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-action
@@ -207,25 +246,33 @@ class Button(ToastElement):
         content:
             The content displayed on the button.
         arguments:
-            App-defined string of arguments that the app will later receive if the user clicks this button.
+            App-defined string of arguments that the app will later receive if the 
+            user clicks this button.
         is_context:
             When set to True, the action becomes a context menu action added to the 
             toast notification's context menu rather than a traditional toast button.
         icon:
             The URI of the image source for a toast button icon. 
-            These icons are white transparent 16x16 pixel images at 100% scaling and should have no padding 
-            included in the image itself. If you choose to provide icons on a toast notification, 
-            you must provide icons for ALL of your buttons in the notification, 
-            as it transforms the style of your buttons into icon buttons.
+            These icons are white transparent 16x16 pixel images at 100% scaling and 
+            should have no padding included in the image itself. If you choose to 
+            provide icons on a toast notification, you must provide icons for ALL of 
+            your buttons in the notification, as it transforms the style of your 
+            buttons into icon buttons. In dark theme, the icon will show in white 
+            color, otherwise, in black color. This is a Windows behaviour.
         input_id:
             Set to the ID of an input to position button beside the input.
         style:
-            The button style. "use_button_style" must be set to True in the toast element. 
+            The button style.
         tooltip:
             The tooltip for a button, if the button has an empty content string.
+        is_protocol:
+            If True, launch an application or visit a link when this button 
+            has clicked. To make it work, also specify a URI in "arguments" parameter.
     """
-
-    ELEMENT_TYPE = ToastElementType.ACTION
+    __slots__ = (
+        "content", "arguments", "is_context", "icon", 
+        "input_id", "style", "tooltip", "is_protocol",
+    )
 
     def __init__(
         self,
@@ -235,15 +282,17 @@ class Button(ToastElement):
         icon : Optional[str] = None,
         input_id : Optional[str] = None,
         style : Optional[ToastButtonStyle] = None,
-        tooltip : Optional[str] = None
+        tooltip : Optional[str] = None,
+        is_protocol : bool = False
     ) -> None:
         self.content = content
         self.arguments = arguments
-        self.is_content = is_context
+        self.is_context = is_context
         self.icon = icon
         self.input_id = input_id
         self.style = style
         self.tooltip = tooltip
+        self.is_protocol = is_protocol
 
     @classmethod
     def from_json(cls, data: Dict[str, Any]):
@@ -251,41 +300,46 @@ class Button(ToastElement):
         x.style = get_enum(ToastButtonStyle, data.get("style", None))
         return x
 
-    def to_xml(self) -> str:
-        return xml(
-            "action", 
-            content = self.content,
-            arguments = self.arguments,
-            activationType = "foreground", 
-            placement = "contextMenu" if self.is_content else None,
-            imageUri = self.icon,
-            hint_inputId = self.input_id,
-            hint_buttonStyle = self.style,
-            hint_toolTip = self.tooltip
-            # Unsupported keywords:
-            # - protocolActivationTargetApplicationPfn
-            # - afterActivationBehavior = "pendingUpdate"
+    def to_xml_data(self) -> XMLData:
+        return XMLData(
+            tag = "action",
+            attrs = {
+                "content": self.content,
+                "arguments": self.arguments,
+                "activationType": "foreground" if not self.is_protocol else "protocol", 
+                "placement": "contextMenu" if self.is_context else None,
+                "imageUri": self.icon,
+                "hint-inputId": self.input_id,
+                "hint-buttonStyle": self.style,
+                "hint-toolTip": self.tooltip,
+                "afterActivationBehavior": "pendingUpdate"
+                # Unsupported options:
+                # - protocolActivationTargetApplicationPfn
+                # - afterActivationBehavior = "pendingUpdate"
+                #     (activationType must be "background")
+            },
+            source_replace = "imageUri"
         )
 
 
-class Header(ToastElement):
+class Header(ToastElement, etype = ToastElementType.HEADER, ename = "header"):
     """
-    Specifies a custom header that groups multiple notifications together within Action Center.
+    Specifies a custom header that groups multiple notifications together within 
+    Action Center.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-header
 
     Args:
         id:
             A developer-created identifier that uniquely identifies this header. 
-            If two notifications have the same header id, they will be displayed underneath the 
-            same header in Action Center.
+            If two notifications have the same header id, they will be displayed 
+            underneath the same header in Action Center.
         title:
             A title for the header.
         arguments:
             A developer-defined string of arguments that is returned to the app 
             when the user clicks this header. Cannot be null.
     """
-
-    ELEMENT_TYPE = ToastElementType.HEADER
+    __slots__ = ("id", "title", "arguments", )
 
     def __init__(
         self,
@@ -296,18 +350,20 @@ class Header(ToastElement):
         self.id = id
         self.title = title
         self.arguments = arguments
-
-    def to_xml(self) -> str:
-        return xml(
-            "header", 
-            id = self.id, 
-            title = self.title, 
-            arguments = self.arguments,
-            activationType = "foreground"
+    
+    def to_xml_data(self) -> XMLData:
+        return XMLData(
+            tag = "header",
+            attrs = {
+                "id": self.id, 
+                "title": self.title, 
+                "arguments": self.arguments,
+                "activationType": "foreground"
+            }
         )
 
 
-class Input(ToastElement):
+class Input(ToastElement, etype = ToastElementType.ACTION, ename = "input"):
     """
     Specifies an text box, shown in a toast notification.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-input
@@ -322,8 +378,7 @@ class Input(ToastElement):
         default:
             Default value shown in the input.
     """
-
-    ELEMENT_TYPE = ToastElementType.ACTION
+    __slots__ = ("id", "placeholder", "title", "default", )
 
     def __init__(
         self,
@@ -336,19 +391,21 @@ class Input(ToastElement):
         self.placeholder = placeholder
         self.title = title
         self.default = default
-
-    def to_xml(self) -> str:
-        return xml(
-            "input", 
-            type = "text",
-            id = self.id, 
-            title = self.title, 
-            placeHolderContent = self.placeholder,
-            defaultInput = self.default
+    
+    def to_xml_data(self) -> XMLData:
+        return XMLData(
+            tag = "input",
+            attrs = {
+                "type": "text",
+                "id": self.id,
+                "title": self.title,
+                "placeHolderContent": self.placeholder,
+                "defaultInput": self.default
+            }
         )
 
 
-class Select(ToastElement):
+class Select(ToastElement, etype = ToastElementType.ACTION, ename = "select"):
     """
     Specifies an selection menu, shown in a toast notification.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-input
@@ -364,8 +421,7 @@ class Select(ToastElement):
         default:
             Key of the option that will be shown as selected in the select menu.
     """
-
-    ELEMENT_TYPE = ToastElementType.ACTION
+    __slots__ = ("id", "options", "title", "default", )
 
     def __init__(
         self,
@@ -379,98 +435,19 @@ class Select(ToastElement):
         self.options = options
         self.default = default
 
-    def to_xml(self) -> str:
-        return xml(
-            "input", 
-            "".join([
-                xml(
-                    "selection", 
-                    id = x, 
-                    content = y
+    def to_xml_data(self) -> XMLData:
+        return XMLData(
+            tag = "input",
+            content = [
+                XMLData(
+                    tag = "selection",
+                    attrs = {"id": x, "content": y}
                 ) for x, y in self.options.items()
-            ]),
-            type = "selection",
-            id = self.id, 
-            title = self.title,
-            defaultInput = self.default
+            ],
+            attrs = {
+                "type": "selection",
+                "id": self.id, 
+                "title": self.title,
+                "defaultInput": self.default
+            }
         )
-
-
-class Subgroup(ToastElementContainer):
-    """
-    Specifies vertical columns that can contain text and images.
-    https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-subgroup
-    """
-    def __init__(self) -> None:
-        super().__init__()
-
-    def to_xml(self) -> str:
-        return xml(
-            "subgroup",
-            "".join([x.to_xml() for x in self.data])
-        )
-
-
-class Group(ToastElement):
-    """
-    Semantically identifies that the content in the group must either be displayed as a whole, 
-    or not displayed if it cannot fit. Groups also allow creating multiple columns.
-    https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-group
-    """
-    
-    ELEMENT_TYPE = ToastElementType.VISUAL
-
-    def __init__(self) -> None:
-        self.data : List[Subgroup] = []
-
-    def add_subgroup(self, subgroup : Subgroup) -> "Group":
-        self.data.append(subgroup)
-        return self
-
-    def remove_subgroup(self, subgroup : Subgroup) -> "Group":
-        self.data.remove(subgroup)
-        return self
-
-    @staticmethod
-    def from_list(data : List[List[ToastElement]]) -> "Group":
-        x = Group()
-        for i in data:
-            y = Subgroup()
-            for e in i:
-                y.append(e)
-            x.data.append(y)
-        return x
-
-    @classmethod
-    def from_json(cls, data: Dict[str, Any]):
-        x = super().from_json({})
-        for i in data["elements"]:
-            y = Subgroup()
-            for e in i:
-                y.append(_create_element(e))
-            x.data.append(y)
-        return x
-
-    def to_xml(self) -> str:
-        return xml(
-            "group",
-            "".join([x.to_xml() for x in self.data])
-        )
-
-
-_ELEMENTS : Dict[str, Type[ToastElement]] = {
-    "text": Text,
-    "image": Image,
-    "input": Input,
-    "progress": Progress,
-    "button": Button,
-    "header": Header,
-    "select": Select,
-    "subgroup": Subgroup,
-    "group": Group
-}
-
-def _create_element(data : Dict[str, Any]):
-    _type = str(data["@type"]).lower()
-    args = {x : y for x, y in data.items() if x != "@type"}
-    return _ELEMENTS[_type].from_json(args)
