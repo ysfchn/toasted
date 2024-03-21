@@ -28,7 +28,7 @@ __all__ = [
 from typing import TYPE_CHECKING
 import sys
 
-if sys.platform == "nt":
+if sys.platform == "win32":
     from winsdk.windows.ui.notifications import (
         ToastNotificationManager
     )

@@ -26,7 +26,8 @@ from toasted.common import (
     ToastElement,
     ToastPayload,
     ToastThemeInfo,
-    get_enum, 
+    get_enum,
+    get_query_app_ids, 
     xml, 
     ToastResult, 
     get_windows_version, 
@@ -583,6 +584,18 @@ class Toast:
                 value or sys.executable
             )
 
+    @staticmethod
+    def list_app_ids() -> List[Tuple[str, Optional[str], Optional[str]]]:
+        """
+        Get a list of all app IDs and their display name and icons 
+        are reigstered for current user and system.
+        """
+        output = []
+        for k, v in get_query_app_ids(is_user = True).items():
+            output.append((k, v.get("DisplayName"), v.get("IconUri"), ))
+        for k, v in get_query_app_ids(is_user = False).items():
+            output.append((k, v.get("DisplayName"), v.get("IconUri"), ))
+        return output
 
     @property
     def history(self) -> HistoryForToast:

@@ -1,3 +1,4 @@
+from pathlib import Path
 from toasted import (
     Toast, Text, ToastTextStyle, 
     Image, Button, ToastImagePlacement, 
@@ -5,6 +6,8 @@ from toasted import (
 )
 from toasted.elements import Select
 from toasted.enums import ToastButtonStyle
+from toasted.common import resolve_uri
+from tempfile import TemporaryFile
 
 import asyncio
 
@@ -13,7 +16,8 @@ APP_ID = "Microsoft.Windows.Explorer"
 # APP_ID = "Foo.Bar.App"
 #
 # To use a custom app ID, you need to register it first with
-# Toast.register_app_id().
+# Toast.register_app_id(). See example_register_custom_app_id()
+# method below for an example.
 
 async def show_parcel_example(app_id : str):
     toast = Toast(
@@ -240,6 +244,38 @@ async def show_typography_example(app_id : str):
     await toast.show()
 
 
+# If you want to get a list of all IDs registered in
+# system to send behalf of these application, you can
+# use Toast.list_app_ids() to get a list of them.
+def example_print_app_ids():
+    for i in Toast.list_app_ids():
+        print(*i, sep = " | ")
+
+
+# If you want to register a custom app ID with an icon
+# (icon:// URI for Windows system icons or full file paths)
+# you can use this method to create a temporary file in the
+# system (if you use a icon://) and register the app ID to
+# the registry.
+def example_register_custom_app_id(app_id : str, name : str, icon_uri : str):
+    resolved_path = icon_uri
+    data = resolve_uri(icon_uri)
+    tf = TemporaryFile("wb")
+    if type(data) is bytes: # noqa: E721
+        tf.write(data)
+        tf.flush()
+        resolved_path = str(Path(tf.name).resolve())
+    Toast.register_app_id(
+        handle = app_id,
+        display_name = name,
+        icon_uri = resolved_path
+    )
+    return tf
+
+
+def run_example():
+    asyncio.run(show_call_example(APP_ID))
+
+
 if __name__ == "__main__":
-    asyncio.run(show_parcel_example(APP_ID))
-    pass
+    run_example()

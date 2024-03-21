@@ -76,6 +76,7 @@ def resolve_uri(
     """
     split = urlsplit(uri, allow_fragments = False)
     path_part = (split.netloc + split.path).removeprefix("/")
+    # https://learn.microsoft.com/en-us/windows/uwp/app-resources/uri-schemes
     # If scheme is "ms-appx", path is relative to current working directory.
     if split.scheme == "ms-appx":
         return Path().cwd() / path_part
@@ -113,6 +114,7 @@ def resolve_uri(
         return urlunsplit(split)
     # If scheme is "ms-appdata", path is relative to appdata which is based
     # on the first part of the path ("local", "roaming" or "temp").
+    # https://learn.microsoft.com/en-us/windows/uwp/app-resources/uri-schemes#path-ms-appdata
     elif split.scheme == "ms-appdata":
         if path_part.startswith("local/"):
             return (
@@ -314,6 +316,29 @@ def get_icon_fonts_path() -> List[Tuple[Literal["mdl2", "fluent"], Path]]:
             if name == v:
                 available.append((k, Path(file)))
     return available
+
+
+def get_query_app_ids(is_user : bool = True) -> Dict[str, Dict[str, Any]]:
+    """
+    Return a mapping of all AUMIDs (App User Model IDs) and their values
+    such as its display name and icon.
+    """
+    output = {}
+    aumids = winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER if is_user else winreg.HKEY_LOCAL_MACHINE, 
+        "SOFTWARE\\Classes\\AppUserModelId"
+    )
+    key_count = winreg.QueryInfoKey(aumids)[0]
+    for i in range(key_count):
+        app_id = winreg.EnumKey(aumids, i)
+        app_info = winreg.OpenKey(aumids, app_id)
+        values = {}
+        value_count = winreg.QueryInfoKey(app_info)[1]
+        for j in range(value_count):
+            k, v, _ = winreg.EnumValue(app_info, j)
+            values[k] = v
+        output[app_id] = values
+    return output
 
 
 def get_windows_build() -> int:
