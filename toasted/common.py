@@ -108,7 +108,12 @@ def resolve_uri(
             icon_padding = int(values.get("padding", None) or 0)
         )
     # If scheme is "http" or "https", left as-is.
-    elif allow_remote and (split.scheme in ["https", "http"]):
+    elif (split.scheme == "https") or (split.scheme == "http"):
+        if not allow_remote:
+            raise ValueError(
+                "A remote URI has been provided while it is not allowed because " +
+                "Toast.remote_media is True: \"{0}\"".format(uri)
+            )
         return urlunsplit(split)
     # If scheme is "ms-appdata", path is relative to appdata which is based
     # on the first part of the path ("local", "roaming" or "temp").
@@ -130,7 +135,7 @@ def resolve_uri(
                 path_part.removeprefix("temp/")
             )
     raise ValueError(
-        "Unknown or invalid URI: \"{0}\"".format(uri)
+        "Unsupported or invalid URI: \"{0}\"".format(uri)
     )
 
 

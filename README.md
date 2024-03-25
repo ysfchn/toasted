@@ -8,7 +8,7 @@ Since Windows **restricts use of some features of toast notifications in unpacka
 
 ![](.github/assets/preview.png)
 
-It works on Windows 10 and up, though outdated/initial builds of Windows 10 may not work as it doesn't include all Notification APIs used in the library. 
+It works and has been tested on Windows 10 and 11, but early builds of Windows 10 may not work as the Notification APIs used in the library are initially introduced in these builds with fewer features. Future releases of Windows should also expected to work as-is due to Microsoft's commitment to making Windows backwards-compatible.
 
 > I'm using Linux in my daily life, and the reason why I created this library even I use Linux is that I started working on this library before my switch to Linux. So I currently use a separate Windows device to develop Toasted on, which may affect my development time. Therefore, while I'm trying to do my best and keep the library updated, do not expect regular updates.
 

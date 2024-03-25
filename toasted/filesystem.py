@@ -41,9 +41,10 @@ class ToastMediaFileSystem():
                     file.write(i)
             else:
                 file.write(contents)
+        path = file_name.resolve().as_uri()
         if cache_key:
-            self.fs_files[cache_key] = file_name.as_uri()
-        return file_name.as_uri()
+            self.fs_files[cache_key] = path
+        return path
 
     def _download_file(
         self, 
@@ -68,14 +69,14 @@ class ToastMediaFileSystem():
                 return
             return self.create_file(resp.iter_bytes(1024), url)
 
-    def get_or_download(
+    def get(
         self,
         url : str,
         query_params : Optional[Dict[str, str]] = None,
         ignore_fail : bool = True,
-        force : bool = False
+        skip_cache : bool = False
     ) -> Optional[str]:
-        if not force:
+        if not skip_cache:
             x = self.fs_files.get(url, None)
             if x:
                 return x

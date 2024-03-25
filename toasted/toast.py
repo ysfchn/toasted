@@ -121,17 +121,20 @@ class Toast:
         scenario:
             The scenario your toast is used for, like an alarm or reminder. 
             REMINDER: A reminder notification. This will be displayed pre-expanded and 
-            stay on the user's screen till dismissed.
+                stay on the user's screen till dismissed.
             ALARM: An alarm notification. This will be displayed pre-expanded and stay 
                 on the user's screen till dismissed. Audio will loop by default and 
                 will use alarm audio.
             INCOMING_CALL: An incoming call notification. This will be displayed 
                 pre-expanded in a special call format and stay on the user's screen 
                 till dismissed. Audio will loop by default and will use ringtone audio.
-            URGENT: An important notification. This allows users to have more control 
+            URGENT: Only takes an effect in Windows 11 build 22546 or later.
+                An important notification. This allows users to have more control 
                 over what apps can send them high-priority toast notifications that can 
                 break through Focus Assist (Do not Disturb). This can be modified in 
-                the notifications settings.
+                the notifications settings. If URGENT is not supported in current system,
+                notification will be shown normally.
+            None: Default notification. (default)
         group_id:
             Group ID that this toast belongs in. Used for deleting a notification 
             from Action Center.
@@ -178,14 +181,15 @@ class Toast:
             app. For example, if a promotion is only valid for 12 hours, set the 
             expiration time to 12 hours.
         app_id:
-            Windows requires an ID of installed application in the computer to show 
-            notifications from. This also sets the icon and name of the given 
-            application in the toast title. Defaults to executable path of Python
-            (sys.executable), so notification will show up as "Python". However, this 
-            will not work for embedded versions of Python since Python is not installed 
-            on system, so you will need to change this. You can also register 
-            an ID in system to use a custom name and icon. 
-            See `Toast.register_app_id()`.
+            Windows requires the Application Model ID of any registered application 
+            on the system to send notifications on its behalf, so toast notification
+            will have the icon and the name of the specified icon. For example, by
+            default, toasts will be sent on behalf of Python executable. 
+            (sys.executable) So in the toast title, it will show up as "Python".
+            However, the default approach will not work for portable versions of
+            Python since Python is not registered to the system in this case, so 
+            you will need to use one of app IDs registered in system or create 
+            yours with `Toast.register_app_id()`, so you can set a custom name and icon.
     """
 
     _current_app_id : Optional[str] = None
@@ -336,12 +340,12 @@ class Toast:
                                 override = self._fs.put(resolved)
                         elif isinstance(resolved, str):
                             if download_media:
-                                override = self._fs.get_or_download(
+                                override = self._fs.get(
                                     url = resolved,
                                     query_params = params
                                 )
                         else:
-                            override = resolved.as_uri()
+                            override = resolved.resolve().as_uri()
                     for c in xmldata_to_content(XMLData(
                         tag = xmldata.tag,
                         content = xmlcontent,
@@ -380,12 +384,12 @@ class Toast:
                     custom_sound_file = self._fs.put(resolved)
             elif isinstance(resolved, str):
                 if download_media:
-                    custom_sound_file = self._fs.get_or_download(
+                    custom_sound_file = self._fs.get(
                         url = resolved,
                         query_params = params
                     )
             else:
-                custom_sound_file = resolved.as_uri()
+                custom_sound_file = resolved.resolve().as_uri()
         return ToastPayload(
             uses_custom_style = using_custom_style or None,
             custom_sound_file = custom_sound_file,
@@ -735,20 +739,25 @@ class Toast:
                 event_loop.call_soon_threadsafe(
                     self._callback_show, data
                 )
-        done, pending = await asyncio.wait(
-            futures, return_when = asyncio.FIRST_COMPLETED
-        )
-        for p in pending:
-            p.cancel()
-        for i, t in enumerate(tokens):
-            if i == 0:
-                self._imp_toast.remove_activated(t)
-            elif i == 1:
-                self._imp_toast.remove_dismissed(t)
-            elif i == 2:
-                self._imp_toast.remove_failed(t)
-        for d in done:
-            return d.result()
+        try:
+            done, pending = await asyncio.wait(
+                futures, return_when = asyncio.FIRST_COMPLETED
+            )
+            for p in pending:
+                p.cancel()
+            for d in done:
+                return d.result()
+        except asyncio.CancelledError:
+            self.hide()
+        finally:
+            for i, t in enumerate(tokens):
+                if i == 0:
+                    self._imp_toast.remove_activated(t)
+                elif i == 1:
+                    self._imp_toast.remove_dismissed(t)
+                elif i == 2:
+                    self._imp_toast.remove_failed(t)
+            
 
     # --------------------
     # Private

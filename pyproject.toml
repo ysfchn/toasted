@@ -1,6 +1,6 @@
 [project]
 name = "toasted"
-version = "0.2.0"
+version = "0.2.1"
 authors = [{ name = "ysfchn" }]
 description = "Toast notifications library for Windows, built on top of WinRT."
 license.file = "LICENSE"

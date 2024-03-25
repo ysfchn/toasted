@@ -274,7 +274,7 @@ def example_register_custom_app_id(app_id : str, name : str, icon_uri : str):
 
 
 def run_example():
-    asyncio.run(show_call_example(APP_ID))
+    asyncio.run(show_parcel_example(APP_ID))
 
 
 if __name__ == "__main__":
