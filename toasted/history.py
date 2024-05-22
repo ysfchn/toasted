@@ -32,6 +32,10 @@ if sys.platform == "win32":
     from winsdk.windows.ui.notifications import (
         ToastNotificationManager
     )
+else:
+    class Proxy:
+        def __getattribute__(self, _): raise Exception("Toasted is not supported on non-Windows platforms.") # noqa: E501
+    ToastNotificationManager = Proxy()
 
 if TYPE_CHECKING:
     from toasted.toast import Toast

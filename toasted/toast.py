@@ -81,6 +81,14 @@ if sys.platform == "win32":
         NotificationSetting,
         NotificationData
     )
+else:
+    class Proxy:
+        def __getattribute__(self, _): raise Exception("Toasted is not supported on non-Windows platforms.") # noqa: E501
+    winreg = winsound = windll = Object = IPropertyValue = \
+    EventRegistrationToken = AccessibilitySettings = UISettings = UIColorType = \
+    dom = ToastNotification = ToastNotificationManager = ToastActivatedEventArgs = \
+    ToastDismissedEventArgs = ToastFailedEventArgs = ToastNotifier = \
+    NotificationSetting = NotificationData = Proxy()
 
 ToastDataType = Dict[str, str]
 ToastResultCallbackType = Optional[Callable[[ToastResult], None]]
@@ -132,8 +140,8 @@ class Toast:
                 An important notification. This allows users to have more control 
                 over what apps can send them high-priority toast notifications that can 
                 break through Focus Assist (Do not Disturb). This can be modified in 
-                the notifications settings. If URGENT is not supported in current system,
-                notification will be shown normally.
+                the notifications settings. If URGENT is not supported in current 
+                system, notification will be shown normally.
             None: Default notification. (default)
         group_id:
             Group ID that this toast belongs in. Used for deleting a notification 
@@ -968,8 +976,9 @@ class Toast:
         )
 
     def __del__(self):
-        if self._fs:
-            self._fs.close()
+        if hasattr(self, "_fs"):
+            if self._fs:
+                self._fs.close()
 
     def __copy__(self) -> "Toast":
         x = Toast()

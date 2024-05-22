@@ -48,13 +48,18 @@ import sys
 from urllib.parse import urlsplit, urlunsplit, parse_qsl
 from pathlib import Path
 from base64 import b64decode
-import winreg
 import string
 from io import BytesIO
 
-from winsdk.windows.storage import SystemDataPaths
 from PIL import Image, ImageFont, ImageDraw, ImageColor
 
+if sys.platform == "win32":
+    import winreg
+    from winsdk.windows.storage import SystemDataPaths
+else:
+    class Proxy:
+        def __getattribute__(self, _): raise Exception("Toasted is not supported on non-Windows platforms.") # noqa: E501
+    winreg = SystemDataPaths = Proxy()
 
 T = TypeVar('T')
 

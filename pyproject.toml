@@ -17,12 +17,12 @@ dependencies = [
 ]
 requires-python = ">=3.9"
 
-[tool.setuptools]
-packages = ["toasted"]
-
 [project.urls]
 "GitHub" = "https://github.com/ysfchn/toasted"
 "Sponsor" = "https://github.com/sponsors/ysfchn"
+
+[tool.setuptools]
+packages = ["toasted"]
 
 [tool.rye]
 dev-dependencies = [
