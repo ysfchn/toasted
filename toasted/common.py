@@ -55,7 +55,7 @@ from PIL import Image, ImageFont, ImageDraw, ImageColor
 
 if sys.platform == "win32":
     import winreg
-    from winsdk.windows.storage import SystemDataPaths
+    from winrt.windows.storage import SystemDataPaths # pyright: ignore[reportMissingImports]
 else:
     class Proxy:
         def __getattribute__(self, _): raise Exception("Toasted is not supported on non-Windows platforms.") # noqa: E501
@@ -437,7 +437,7 @@ class ToastResult:
 
 
 class ToastElement(ToastBase):
-    _registry : List[Tuple[str, "ToastElement"]] = []
+    _registry : List[Tuple[str, Type["ToastElement"]]] = []
     _etype : ToastElementType
 
     def __init_subclass__(cls, ename : str, etype : ToastElementType, **kwargs) -> None:

@@ -13,7 +13,14 @@ classifiers = [
 dependencies = [
     "httpx~=0.25.0",
     "Pillow~=10.2.0",
-    "winsdk~=1.0.0b6 ; platform_system == 'Windows'"
+    "winrt-Windows.UI.ViewManagement~=2.2.0 ; sys_platform == 'win32'",
+    "winrt-Windows.Foundation~=2.2.0 ; sys_platform == 'win32'",
+    "winrt-Windows.UI.Notifications~=2.2.0 ; sys_platform == 'win32'",
+    "winrt-Windows.Storage~=2.2.0 ; sys_platform == 'win32'",
+    "winrt-Windows.Data.Xml.Dom~=2.2.0 ; sys_platform == 'win32'",
+    # Not directly used by Toasted, but appearently it is required for toast
+    # dismissed events, otherwise it raises an exception.
+    "winrt-Windows.Foundation.Collections~=2.2.0 ; sys_platform == 'win32'"
 ]
 requires-python = ">=3.9"
 
@@ -35,3 +42,12 @@ requires = [
     "wheel"
 ]
 build-backend = "setuptools.build_meta"
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+reportDeprecated = "none"
+typeCheckingMode = "standard"
+reportOptionalMemberAccess = "warning"
+reportOptionalIterable = "none"
+pythonPlatform = "Windows"

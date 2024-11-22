@@ -63,15 +63,15 @@ if sys.platform == "win32":
     import winsound
     from ctypes import windll
 
-    from winsdk._winrt import Object # type: ignore
-    from winsdk.windows.foundation import IPropertyValue, EventRegistrationToken # type: ignore
-    from winsdk.windows.ui.viewmanagement import ( # type: ignore
+    from winrt.system import Object  # pyright: ignore[reportMissingImports]
+    from winrt.windows.foundation import IPropertyValue, EventRegistrationToken  # pyright: ignore[reportMissingImports]
+    from winrt.windows.ui.viewmanagement import (  # pyright: ignore[reportMissingImports]
         AccessibilitySettings, 
         UISettings, 
         UIColorType
     )
-    import winsdk.windows.data.xml.dom as dom # type: ignore
-    from winsdk.windows.ui.notifications import ( # type: ignore
+    import winrt.windows.data.xml.dom as dom  # pyright: ignore[reportMissingImports]
+    from winrt.windows.ui.notifications import (  # pyright: ignore[reportMissingImports]
         ToastNotification, 
         ToastNotificationManager, 
         ToastActivatedEventArgs, 

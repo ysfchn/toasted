@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 import sys
 
 if sys.platform == "win32":
-    from winsdk.windows.ui.notifications import (
+    from winrt.windows.ui.notifications import ( # pyright: ignore[reportMissingImports]
         ToastNotificationManager
     )
 else:
