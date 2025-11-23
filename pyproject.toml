@@ -11,8 +11,8 @@ classifiers = [
     "Operating System :: Microsoft :: Windows"
 ]
 dependencies = [
-    "httpx~=0.25.0",
-    "Pillow~=10.2.0",
+    "httpx",
+    "Pillow",
     "winrt-Windows.UI.ViewManagement~=2.2.0 ; sys_platform == 'win32'",
     "winrt-Windows.Foundation~=2.2.0 ; sys_platform == 'win32'",
     "winrt-Windows.UI.Notifications~=2.2.0 ; sys_platform == 'win32'",
