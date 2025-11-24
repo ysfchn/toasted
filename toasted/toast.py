@@ -794,7 +794,7 @@ class Toast:
     ) -> Tuple[
         asyncio.AbstractEventLoop, 
         Set[asyncio.Future], 
-        Set["EventRegistrationToken"],
+        List["EventRegistrationToken"],
         str
     ]:
         self._imp_manager = ToastNotificationManager.create_toast_notifier(self.app_id)
@@ -816,7 +816,7 @@ class Toast:
         self._imp_toast.expiration_time = self.expiration_time
         # Create handlers.
         futures = set()
-        tokens = set()
+        tokens: List[EventRegistrationToken] = []
         for k, v in (
             ("add_activated", "_handle_toast_activated"),
             ("add_dismissed", "_handle_toast_dismissed"),
@@ -826,7 +826,7 @@ class Toast:
                 loop = event_loop, method_name = v, hook_name = k
             )
             futures.add(fut)
-            tokens.add(tok)
+            tokens.append(token_obj)
         return event_loop, futures, tokens, payload.custom_sound_file,
 
 
