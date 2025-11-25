@@ -734,7 +734,7 @@ class Toast:
                 winsound.PlaySound(None, 4)
             else:
                 winsound.PlaySound(
-                    Path(custom_sound).resolve().as_posix(), 
+                    str(Path(custom_sound).resolve()), 
                     winsound.SND_FILENAME + winsound.SND_NODEFAULT + \
                     winsound.SND_ASYNC + \
                     (winsound.SND_LOOP if self.sound_loop else 0)
