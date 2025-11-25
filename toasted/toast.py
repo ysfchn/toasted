@@ -728,6 +728,7 @@ class Toast:
             mute_sound, data
         )
         self._imp_manager.show(self._imp_toast)
+        await asyncio.sleep(0.1) # Wait 100 milliseconds
         # If sound is custom, play with winsound.
         if custom_sound:
             if mute_sound:
