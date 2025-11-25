@@ -734,8 +734,10 @@ class Toast:
             if mute_sound:
                 winsound.PlaySound(None, 4)
             else:
+                sound_path = Path.resolve().absolute().as_uri()
+                print(sound_path)
                 winsound.PlaySound(
-                    str(Path(custom_sound).resolve()), 
+                    sound_path, 
                     winsound.SND_FILENAME + winsound.SND_NODEFAULT + \
                     winsound.SND_ASYNC + \
                     (winsound.SND_LOOP if self.sound_loop else 0)
