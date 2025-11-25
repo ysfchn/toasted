@@ -381,7 +381,7 @@ class Toast:
             src = self.sound if self.uses_windows_sound else None,
             # If custom sound has provided, mute the original 
             # toast sound to None since we use our own sound solution.
-            silent = self._xml_mute_sound or self.uses_custom_sound,
+            silent = "true" if (self._xml_mute_sound or self.uses_custom_sound) else "false",
             loop = self.sound_loop
         )
         custom_sound_file : str = ""
