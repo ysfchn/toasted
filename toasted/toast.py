@@ -57,6 +57,7 @@ from typing import (
     List, Union, Literal, Set
 )
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 if sys.platform == "win32":
     import winreg
