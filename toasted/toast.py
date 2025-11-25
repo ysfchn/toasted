@@ -728,16 +728,20 @@ class Toast:
             mute_sound, data
         )
         self._imp_manager.show(self._imp_toast)
-        await asyncio.sleep(0.1) # Wait 100 milliseconds
         # If sound is custom, play with winsound.
         if custom_sound:
             if mute_sound:
                 winsound.PlaySound(None, 4)
             else:
-                sound_path = Path.resolve().absolute().as_uri()
-                print(sound_path)
+                # Resolves file:// style path parsed back to full windows path
+                decoded_path = unquote(urlparse(custom_sound).path)
+                if decoded_path.startswith("/") and decoded_path[2] == ":":
+                    cleaned_path = decoded_path[1:]
+                else:
+                    cleaned_path = decoded_path
+                sound_path = str(Path(cleaned_path).resolve().absolute())
                 winsound.PlaySound(
-                    sound_path, 
+                    sound_path,
                     winsound.SND_FILENAME + winsound.SND_NODEFAULT + \
                     winsound.SND_ASYNC + \
                     (winsound.SND_LOOP if self.sound_loop else 0)
