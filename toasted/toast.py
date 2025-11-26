@@ -57,7 +57,6 @@ from typing import (
     List, Union, Literal, Set
 )
 from pathlib import Path
-from urllib.parse import unquote, urlparse
 
 if sys.platform == "win32":
     import winreg
@@ -382,7 +381,7 @@ class Toast:
             src = self.sound if self.uses_windows_sound else None,
             # If custom sound has provided, mute the original 
             # toast sound to None since we use our own sound solution.
-            silent = "true" if (self._xml_mute_sound or self.uses_custom_sound) else "false",
+            silent = self._xml_mute_sound or self.uses_custom_sound,
             loop = self.sound_loop
         )
         custom_sound_file : str = ""
@@ -398,7 +397,7 @@ class Toast:
                         query_params = params
                     )
             else:
-                custom_sound_file = resolved.resolve().as_uri()
+                custom_sound_file = resolved.resolve()
         return ToastPayload(
             uses_custom_style = using_custom_style or None,
             custom_sound_file = custom_sound_file,
@@ -734,15 +733,8 @@ class Toast:
             if mute_sound:
                 winsound.PlaySound(None, 4)
             else:
-                # Resolves file:// style path parsed back to full windows path
-                decoded_path = unquote(urlparse(custom_sound).path)
-                if decoded_path.startswith("/") and decoded_path[2] == ":":
-                    cleaned_path = decoded_path[1:]
-                else:
-                    cleaned_path = decoded_path
-                sound_path = str(Path(cleaned_path).resolve().absolute())
                 winsound.PlaySound(
-                    sound_path,
+                    Path(custom_sound).resolve().as_posix(), 
                     winsound.SND_FILENAME + winsound.SND_NODEFAULT + \
                     winsound.SND_ASYNC + \
                     (winsound.SND_LOOP if self.sound_loop else 0)
