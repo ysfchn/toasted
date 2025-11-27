@@ -397,7 +397,7 @@ class Toast:
                         query_params = params
                     )
             else:
-                custom_sound_file = resolved.resolve().as_uri()
+                custom_sound_file = resolved.resolve()
         return ToastPayload(
             uses_custom_style = using_custom_style or None,
             custom_sound_file = custom_sound_file,
