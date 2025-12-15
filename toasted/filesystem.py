@@ -1,4 +1,4 @@
-from tempfile import TemporaryDirectory, _RandomNameSequence
+from tempfile import TemporaryDirectory, _RandomNameSequence # type: ignore
 from typing import Optional, Dict, Union, Iterator
 from httpx import Client
 from pathlib import Path
@@ -51,7 +51,7 @@ class ToastMediaFileSystem():
         url : str,
         query_params : Optional[Dict[str, str]] = None,
         ignore_fail : bool = True
-    ) -> Optional[str]:
+    ) -> str:
         with self.client.stream(
             method = "GET",
             url = url,
@@ -66,7 +66,7 @@ class ToastMediaFileSystem():
             # Only allow media smaller than or equal to 3 MB.
             # https://docs.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/send-local-toast?tabs=uwp#adding-images
             if int(resp.headers["Content-Length"]) > (3 * 1024 * 1024):
-                return
+                raise ValueError(f"Remote image cannot be bigger than 3 MB: {url}")
             return self.create_file(resp.iter_bytes(1024), url)
 
     def get(
@@ -75,7 +75,7 @@ class ToastMediaFileSystem():
         query_params : Optional[Dict[str, str]] = None,
         ignore_fail : bool = True,
         skip_cache : bool = False
-    ) -> Optional[str]:
+    ) -> str:
         if not skip_cache:
             x = self.fs_files.get(url, None)
             if x:

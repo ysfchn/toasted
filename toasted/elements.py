@@ -30,11 +30,7 @@ __all__ = [
     "Select"
 ]
 
-from toasted.common import (
-    ToastElement, 
-    XMLData,
-    get_enum
-)
+from toasted.common import ToastElement
 from toasted.enums import (
     ToastElementType, 
     ToastTextAlign, 
@@ -43,6 +39,7 @@ from toasted.enums import (
     ToastImagePlacement
 )
 from typing import Optional, Dict, Any, Union
+from xml.etree import ElementTree as ET
 
 class Text(ToastElement, etype = ToastElementType.VISUAL, ename = "text"):
     """
@@ -110,24 +107,30 @@ class Text(ToastElement, etype = ToastElementType.VISUAL, ename = "text"):
     @classmethod
     def from_json(cls, data: Dict[str, Any]):
         x = super().from_json(data)
-        x.style = get_enum(ToastTextStyle, data.get("style", None))
-        x.align = get_enum(ToastTextAlign, data.get("align", None))
+        if data.get("style"):
+            x.style = ToastTextStyle(data["style"])
+        if data.get("align"):
+            x.align = ToastTextAlign(data["align"])
         return x
 
-    def to_xml_data(self) -> XMLData:
-        return XMLData(
-            tag = "text", 
-            content = self.content,
-            attrs = {
-                "id": self.id,
-                "placement": "attribution" if self.is_attribution else None,
-                "hint-callScenarioCenterAlign": True if self.is_center else None,
-                "hint-align": self.align,
-                "hint-style": self.style,
-                "hint-maxLines": self.max_lines,
-                "hint-minLines": self.min_lines
-            }
-        )
+    def to_xml(self):
+        el = ET.Element("text")
+        el.text = self.content
+        if self.id:
+            el.attrib["id"] = str(self.id)
+        if self.is_attribution:
+            el.attrib["placement"] = "attribution"
+        if self.is_center:
+            el.attrib["hint-callScenarioCenterAlign"] = "true"
+        if self.align:
+            el.attrib["hint-align"] = self.align.value
+        if self.style:
+            el.attrib["hint-style"] = self.style.value
+        if self.max_lines:
+            el.attrib["hint-maxLines"] = str(self.max_lines)
+        if self.min_lines:
+            el.attrib["hint-minLines"] = str(self.min_lines)
+        return el
 
 
 class Image(ToastElement, etype = ToastElementType.VISUAL, ename = "image"):
@@ -173,21 +176,22 @@ class Image(ToastElement, etype = ToastElementType.VISUAL, ename = "image"):
     @classmethod
     def from_json(cls, data: Dict[str, Any]):
         x = super().from_json(data)
-        x.placement = get_enum(ToastImagePlacement, data.get("placement", None))
+        if data.get("placement"):
+            x.placement = ToastImagePlacement(data["placement"])
         return x
 
-    def to_xml_data(self) -> XMLData:
-        return XMLData(
-            tag = "image",
-            attrs = {
-                "id": self.id,
-                "src": self.source,
-                "alt": self.alt,
-                "placement": self.placement,
-                "hint-crop": "circle" if self.is_circle else None
-            },
-            source_replace = "src"
-        )
+    def to_xml(self):
+        el = ET.Element("image")
+        if self.id:
+            el.attrib["id"] = str(self.id)
+        el.attrib["src"] = self.source
+        if self.alt:
+            el.attrib["alt"] = self.alt
+        if self.placement:
+            el.attrib["placement"] = self.placement.value
+        if self.is_circle:
+            el.attrib["hint-crop"] = "circle"
+        return el
 
 
 class Progress(ToastElement, etype = ToastElementType.VISUAL, ename = "progress"):
@@ -225,16 +229,15 @@ class Progress(ToastElement, etype = ToastElementType.VISUAL, ename = "progress"
         self.title = title
         self.display_value = display_value
 
-    def to_xml_data(self) -> XMLData:
-        return XMLData(
-            tag = "progress",
-            attrs = {
-                "title": self.title,
-                "value": "indeterminate" if (self.value == -1) else self.value,
-                "status": self.status or " ",
-                "valueStringOverride": self.display_value
-            }
-        )
+    def to_xml(self):
+        el = ET.Element("progress")
+        el.attrib["value"] = "indeterminate" if (self.value == -1) else str(self.value)
+        if self.title:
+            el.attrib["title"] = self.title
+        el.attrib["status"] = self.status or " "
+        if self.display_value:
+            el.attrib["valueStringOverride"] = self.display_value
+        return el
 
 
 class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
@@ -297,29 +300,30 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
     @classmethod
     def from_json(cls, data: Dict[str, Any]):
         x = super().from_json(data)
-        x.style = get_enum(ToastButtonStyle, data.get("style", None))
+        if data.get("style"):
+            x.style = ToastButtonStyle(data["style"])
         return x
 
-    def to_xml_data(self) -> XMLData:
-        return XMLData(
-            tag = "action",
-            attrs = {
-                "content": self.content,
-                "arguments": self.arguments,
-                "activationType": "foreground" if not self.is_protocol else "protocol", 
-                "placement": "contextMenu" if self.is_context else None,
-                "imageUri": self.icon,
-                "hint-inputId": self.input_id,
-                "hint-buttonStyle": self.style,
-                "hint-toolTip": self.tooltip,
-                "afterActivationBehavior": "pendingUpdate"
-                # Unsupported options:
-                # - protocolActivationTargetApplicationPfn
-                # - afterActivationBehavior = "pendingUpdate"
-                #     (activationType must be "background")
-            },
-            source_replace = "imageUri"
-        )
+    def to_xml(self):
+        el = ET.Element("action")
+        el.attrib["content"] = self.content
+        el.attrib["arguments"] = self.arguments
+        el.attrib["activationType"] = "foreground" if not self.is_protocol else "protocol"
+        # Unsupported options:
+        # - protocolActivationTargetApplicationPfn
+        # - afterActivationBehavior = "pendingUpdate"
+        #     (activationType must be "background")
+        if self.is_context:
+            el.attrib["placement"] = "contextMenu"
+        if self.icon:
+            el.attrib["imageUri"] = self.icon
+        if self.input_id:
+            el.attrib["hint-inputId"] = self.input_id
+        if self.style:
+            el.attrib["hint-buttonStyle"] = self.style.value
+        if self.tooltip:
+            el.attrib["hint-toolTip"] = self.tooltip
+        return el
 
 
 class Header(ToastElement, etype = ToastElementType.HEADER, ename = "header"):
@@ -351,16 +355,13 @@ class Header(ToastElement, etype = ToastElementType.HEADER, ename = "header"):
         self.title = title
         self.arguments = arguments
     
-    def to_xml_data(self) -> XMLData:
-        return XMLData(
-            tag = "header",
-            attrs = {
-                "id": self.id, 
-                "title": self.title, 
-                "arguments": self.arguments,
-                "activationType": "foreground"
-            }
-        )
+    def to_xml(self):
+        el = ET.Element("header")
+        el.attrib["id"] = self.id
+        el.attrib["title"] = self.title
+        el.attrib["arguments"] = self.arguments
+        el.attrib["activationType"] = "foreground"
+        return el
 
 
 class Input(ToastElement, etype = ToastElementType.ACTION, ename = "input"):
@@ -392,17 +393,17 @@ class Input(ToastElement, etype = ToastElementType.ACTION, ename = "input"):
         self.title = title
         self.default = default
     
-    def to_xml_data(self) -> XMLData:
-        return XMLData(
-            tag = "input",
-            attrs = {
-                "type": "text",
-                "id": self.id,
-                "title": self.title,
-                "placeHolderContent": self.placeholder,
-                "defaultInput": self.default
-            }
-        )
+    def to_xml(self):
+        el = ET.Element("input")
+        el.attrib["id"] = self.id
+        el.attrib["type"] = "text"
+        if self.title:
+            el.attrib["title"] = self.title
+        if self.placeholder:
+            el.attrib["placeHolderContent"] = self.placeholder
+        if self.default:
+            el.attrib["defaultInput"] = self.default
+        return el
 
 
 class Select(ToastElement, etype = ToastElementType.ACTION, ename = "select"):
@@ -435,19 +436,17 @@ class Select(ToastElement, etype = ToastElementType.ACTION, ename = "select"):
         self.options = options
         self.default = default
 
-    def to_xml_data(self) -> XMLData:
-        return XMLData(
-            tag = "input",
-            content = [
-                XMLData(
-                    tag = "selection",
-                    attrs = {"id": x, "content": y}
-                ) for x, y in self.options.items()
-            ],
-            attrs = {
-                "type": "selection",
-                "id": self.id, 
-                "title": self.title,
-                "defaultInput": self.default
-            }
-        )
+    def to_xml(self):
+        el = ET.Element("input")
+        el.attrib["id"] = self.id
+        el.attrib["type"] = "selection"
+        if self.title:
+            el.attrib["title"] = self.title
+        if self.default:
+            el.attrib["defaultInput"] = self.default
+        for k, v in self.options.items():
+            choice = ET.Element("selection")
+            choice.attrib["id"] = k
+            choice.attrib["content"] = v
+            el.append(choice)
+        return el

@@ -24,18 +24,14 @@ __all__ = ["Toast"]
 
 from toasted.common import ( 
     ToastElement,
-    ToastPayload,
     ToastThemeInfo,
-    get_enum,
     get_query_app_ids,
-    get_windows_build, 
-    xml, 
+    get_windows_build,
     ToastResult,
     resolve_uri,
     get_theme_query_parameters,
-    xmldata_to_content,
-    XMLData
 )
+from toasted.elements import Button, Image, Text
 from toasted.filesystem import ToastMediaFileSystem
 from toasted.history import HistoryForToast
 from toasted.enums import (
@@ -53,10 +49,11 @@ import locale
 import inspect
 import sys
 from typing import (
-    Any, Callable, Dict, Generator, Optional, Tuple, 
+    Any, Callable, Dict, Optional, Tuple, 
     List, Union, Literal, Set
 )
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 if sys.platform == "win32":
     import winreg
@@ -94,11 +91,15 @@ ToastDataType = Dict[str, str]
 ToastResultCallbackType = Optional[Callable[[ToastResult], None]]
 ToastShowCallbackType = Optional[Callable[[Optional[ToastDataType]], None]]
 
-ToastElementTreeType = Union[ToastElement, List["ToastElementTreeType"]]
-ToastElementsListType = List[ToastElementTreeType]
+ToastElementListItem = Union[
+    ToastElement, 
+    List[List[Union[Image, Text]]]
+]
 
-ToastElementTreeJSONType = Union[Dict[str, Any], List["ToastElementTreeJSONType"]]
-ToastElementsListJSONType = List[ToastElementTreeJSONType]
+ToastElementListItemJSON = Union[
+    Dict[str, Any],
+    List[List[Dict[str, Any]]]
+]
 
 LEVEL_START = "LEVEL_START"
 LEVEL_END = "LEVEL_END"
@@ -249,7 +250,7 @@ class Toast:
         app_id : Optional[str] = None
     ) -> None:
         super().__init__()
-        self.elements : ToastElementsListType = []
+        self.elements : List[ToastElementListItem] = []
         self.duration = duration
         self.arguments = arguments
         self.scenario = scenario
@@ -302,142 +303,102 @@ class Toast:
             return decorator
 
 
-    def get_payload(
-        self,
-        download_media : bool = False
-    ) -> ToastPayload:
+    def _to_xml(self, allow_fs: bool):
         """
-        Walk elements and convert them to XML recursively.
+        Create XML representing the toast.
         """
-        params = None if not self.add_query_params else get_theme_query_parameters(
+        query_params = None if not self.add_query_params else get_theme_query_parameters(
             info = self.get_theme_info()
         )
-        visual, actions, other = ("", ) * 3
-        current_level = 0
-        using_custom_style : bool = False
-        if download_media:
-            if self._fs:
-                self._fs.close()
+
+        root = ET.Element("toast")
+        if self.arguments:
+            root.attrib["launch"] = self.arguments
+        if self.duration:
+            root.attrib["duration"] = self.duration.value
+        if self.scenario:
+            root.attrib["scenario"] = self.scenario.value
+        if self.timestamp:
+            root.attrib["displayTimestamp"] = self.timestamp.isoformat(timespec = "milliseconds")
+
+        visual = ET.Element("visual")
+        actions = ET.Element("actions")
+        binding = ET.Element("binding")
+        binding.attrib["template"] = "ToastGeneric"
+        visual.append(binding)
+        root.append(visual)
+
+        # Iterate through elements and add them to the binding element.
+        for element in self.elements:
+            if isinstance(element, list):
+                group = ET.Element("group")
+                for subgroup in element:
+                    sgroup = ET.Element("subgroup")
+                    assert isinstance(subgroup, list), "Groups can only contain subgroups."
+                    for item in subgroup:
+                        assert isinstance(item, (Image, Text)), "Subgroups can only contain Image or Text elements."
+                        el = item.to_xml()
+                        if el.attrib.get("src"):
+                            el.attrib["src"] = self._resolve_uri(el.attrib["src"], allow_fs, query_params)
+                        sgroup.append(el)
+                    group.append(sgroup)
+                binding.append(group)
+            else:
+                assert isinstance(element, ToastElement), "Toasts must contain of ToastElement objects."
+                el = element.to_xml()
+                if element._etype == ToastElementType.ACTION:
+                    if el.attrib.get("imageUri"):
+                        el.attrib["imageUri"] = self._resolve_uri(el.attrib["imageUri"], allow_fs, query_params)
+                    actions.append(el)
+                elif element._etype == ToastElementType.HEADER:
+                    root.append(el)
+                else:
+                    if el.attrib.get("src"):
+                        el.attrib["src"] = self._resolve_uri(el.attrib["src"], allow_fs, query_params)
+                    binding.append(el)
+                # Enable custom styles on the toast itself if any button has a custom style.
+                if isinstance(element, Button):
+                    if element.style:
+                        root.attrib["useButtonStyle"] = "true"
+        if len(actions):
+            root.append(actions)
+
+        # Notification sound
+        audio = ET.Element("audio")
+        if self.sound:
+            audio.attrib["src"] = self._resolve_uri(self.sound, allow_fs, query_params)
+        # If custom sound has provided, mute the original toast 
+        # sound to None since we use our own sound solution.
+        if self._xml_mute_sound or self.uses_custom_sound:
+            audio.attrib["silent"] = "true"
+        audio.attrib["loop"] = "true" if self.sound_loop else "false"
+        root.append(audio)
+        return root
+
+
+    def _resolve_uri(self, uri: str, allow_fs: bool, query_params: Optional[Dict[str, str]]):
+        if not self._fs:
             self._fs = ToastMediaFileSystem()
-        for el in self._walk_elements(self.elements):
-            if el in [LEVEL_START, LEVEL_END]:
-                is_end = el == LEVEL_END
-                if not is_end:
-                    current_level += 1
-                if current_level > 2:
-                    raise ValueError(
-                        "Toasts doesn't support nested elements other " +
-                        "than groups and subgroups."
-                    )
-                elif current_level == 1:
-                    visual += f"<{'/' if is_end else ''}group>"
-                elif current_level == 2:
-                    visual += f"<{'/' if is_end else ''}subgroup>"
-                if is_end:
-                    current_level -= 1
-            else:
-                xmldata = el.to_xml_data()
-                xmlcontent = ""
-                override = ""
-                if xmldata.source_replace:
-                    source_uri = xmldata.attrs[xmldata.source_replace]
-                    if source_uri:
-                        resolved = resolve_uri(source_uri, self.remote_media)
-                        if isinstance(resolved, bytes):
-                            if download_media:
-                                override = self._fs.put(resolved)
-                        elif isinstance(resolved, str):
-                            if download_media:
-                                override = self._fs.get(
-                                    url = resolved,
-                                    query_params = params
-                                )
-                        else:
-                            override = resolved.resolve().as_uri()
-                    for c in xmldata_to_content(XMLData(
-                        tag = xmldata.tag,
-                        content = xmlcontent,
-                        attrs = {
-                            **(xmldata.attrs or {}), 
-                            xmldata.source_replace : override or None
-                        }
-                    )):
-                        xmlcontent += c or ""
-                else:
-                    for c in xmldata_to_content(xmldata):
-                        xmlcontent += c or ""
-                if el._etype == ToastElementType.ACTION:
-                    actions += xmlcontent
-                elif el._etype == ToastElementType.VISUAL:
-                    visual += xmlcontent
-                else:
-                    other += xmlcontent
-                # Enable custom styles on the toast
-                # if button has a custom style.
-                if xmldata.attrs.get("hint-buttonStyle", None):
-                    using_custom_style = True
-        other += xml(
-            "audio", 
-            src = self.sound if self.uses_windows_sound else None,
-            # If custom sound has provided, mute the original 
-            # toast sound to None since we use our own sound solution.
-            silent = self._xml_mute_sound or self.uses_custom_sound,
-            loop = self.sound_loop
-        )
-        custom_sound_file : str = ""
-        if self.uses_custom_sound:
-            resolved = resolve_uri(self.sound, self.remote_media)
-            if isinstance(resolved, bytes):
-                if download_media:
-                    custom_sound_file = self._fs.put(resolved)
-            elif isinstance(resolved, str):
-                if download_media:
-                    custom_sound_file = self._fs.get(
-                        url = resolved,
-                        query_params = params
-                    )
-            else:
-                custom_sound_file = resolved.resolve()
-        return ToastPayload(
-            uses_custom_style = using_custom_style or None,
-            custom_sound_file = custom_sound_file,
-            base_path = self.base_path or resolve_uri("ms-appx://").as_uri(),
-            arguments = self.arguments,
-            duration = None if not self.duration else self.duration.value,
-            scenario = None if not self.scenario else self.scenario.value,
-            timestamp = (None if not self.timestamp else self.timestamp.isoformat()),
-            visual_xml = visual,
-            actions_xml = actions,
-            other_xml = other
-        )
-
-
-    @staticmethod
-    def _payload_to_xml_string(payload : ToastPayload):
-        return xml("toast",
-                xml("visual", 
-                    xml("binding", payload.visual_xml, template = "ToastGeneric"),
-                    baseUri = payload.base_path
-                ) + (
-                    "" if not payload.actions_xml else \
-                    xml("actions", payload.actions_xml)
-                ) + \
-            payload.other_xml,
-            launch = payload.arguments,
-            duration = payload.duration,
-            scenario = payload.scenario,
-            displayTimestamp = payload.timestamp,
-            useButtonStyle = payload.uses_custom_style
-        )
+        resolved = resolve_uri(uri, self.remote_media)
+        if isinstance(resolved, bytes):
+            if allow_fs:
+                return self._fs.put(resolved)
+        elif isinstance(resolved, str):
+            if allow_fs:
+                return self._fs.get(
+                    url = resolved,
+                    query_params = query_params
+                )
+        else:
+            return resolved.resolve().as_uri()
+        return uri
 
 
     def to_xml_string(
         self,
-        download_media : bool = False
+        download_media: bool = False
     ) -> str:
-        return self._payload_to_xml_string(
-            self.get_payload(download_media)
-        )
+        return ET.tostring(self._to_xml(download_media), encoding = "utf-8")
 
 
     @staticmethod
@@ -551,6 +512,7 @@ class Toast:
                 # See register_app_id().
                 # TODO: maybe return a value other than False?
                 return False
+            raise e
 
 
     @property
@@ -656,7 +618,8 @@ class Toast:
         # then we are sure that toast never displayed before.
         if (not self._imp_toast) or (not self._imp_manager):
             return
-        self._fs.close()
+        if self._fs:
+            self._fs.close()
         winsound.PlaySound(None, 4)
         self._imp_manager.hide(self._imp_toast)
 
@@ -707,7 +670,7 @@ class Toast:
         self,
         data : Optional[ToastDataType] = None,
         mute_sound : bool = False
-    ) -> ToastResult:
+    ) -> Optional[ToastResult]:
         """
         Shows the notification. If there is any {binding} key, you can give a "data" 
         dictionary to replace binding keys with their values. You can also 
@@ -724,17 +687,15 @@ class Toast:
                 notification sounds without needing to change Toast.sound attribute for
                 each time.
         """
-        event_loop, futures, tokens, custom_sound = self._set_toast_manager(
-            mute_sound, data
-        )
+        event_loop, futures, tokens = self._set_toast_manager(mute_sound, data)
         self._imp_manager.show(self._imp_toast)
         # If sound is custom, play with winsound.
-        if custom_sound:
+        if self.uses_custom_sound:
             if mute_sound:
                 winsound.PlaySound(None, 4)
             else:
                 winsound.PlaySound(
-                    Path(custom_sound).resolve().as_posix(), 
+                    str(Path(str(self.sound)).resolve()),
                     winsound.SND_FILENAME + winsound.SND_NODEFAULT + \
                     winsound.SND_ASYNC + \
                     (winsound.SND_LOOP if self.sound_loop else 0)
@@ -794,15 +755,13 @@ class Toast:
     ) -> Tuple[
         asyncio.AbstractEventLoop, 
         Set[asyncio.Future], 
-        List["EventRegistrationToken"],
-        str
+        List["EventRegistrationToken"]
     ]:
         self._imp_manager = ToastNotificationManager.create_toast_notifier(self.app_id)
         event_loop = asyncio.get_running_loop()
         self._xml_mute_sound = mute_sound
         xml = dom.XmlDocument()
-        payload = self.get_payload(download_media = True)
-        xml.load_xml(self._payload_to_xml_string(payload))
+        xml.load_xml(self._to_xml(True))
         self._imp_toast = ToastNotification(xml)
         if data:
             self._imp_toast.data = self._build_notification_data(data)
@@ -827,7 +786,7 @@ class Toast:
             )
             futures.add(fut)
             tokens.append(token_obj)
-        return event_loop, futures, tokens, payload.custom_sound_file,
+        return event_loop, futures, tokens,
 
 
     def _handle_toast_activated(
@@ -835,7 +794,8 @@ class Toast:
         toast : "ToastNotification", 
         args : "Object"
     ):
-        self._fs.close()
+        if self._fs:
+            self._fs.close()
         eventargs = ToastActivatedEventArgs._from(args)
         inputs = {}
         if eventargs.user_input:
@@ -857,7 +817,8 @@ class Toast:
         toast : "ToastNotification", 
         args : "ToastDismissedEventArgs"
     ):
-        self._fs.close()
+        if self._fs:
+            self._fs.close()
         winsound.PlaySound(None, 4)
         result = ToastResult(
             arguments = "", 
@@ -875,7 +836,8 @@ class Toast:
         toast : "ToastNotification",
         args : "ToastFailedEventArgs"
     ):
-        self._fs.close()
+        if self._fs:
+            self._fs.close()
         winsound.PlaySound(None, 4)
         raise RuntimeError(
             "Toast failed with error code: " + args.error_code.value
@@ -891,33 +853,15 @@ class Toast:
             x.values[str(k)] = str(v)
         return x
 
-
-    @staticmethod
-    def _walk_elements(
-        elements : ToastElementsListType,
-    ) -> Generator[Union[ToastElement, ToastElementWalkLevelType], None, None]:
-        for i in elements:
-            if isinstance(i, list):
-                yield LEVEL_START
-                for j in Toast._walk_elements(i):
-                    yield j
-                yield LEVEL_END
-            elif not isinstance(i, ToastElement):
-                raise TypeError(
-                    f"Item must be a type of ToastElement: '{repr(i)}'"
-                )
-            else:
-                yield i
-    
-
     @staticmethod
     def elements_from_json(
-        elements : ToastElementsListJSONType
+        elements : List[ToastElementListItemJSON]
     ):
         for i in elements:
             if isinstance(i, list):
-                for j in Toast.elements_from_json(i):
-                    yield j
+                for j in i:
+                    for k in j:
+                        yield ToastElement._create_from_type(**k)
             else:
                 yield ToastElement._create_from_type(**i)
 
@@ -939,9 +883,9 @@ class Toast:
                 Element types are defined with "_type" key.
         """
         toast = cls(
-            duration = get_enum(ToastDuration, json.get("duration", None)),
+            duration = None if not json.get("duration") else ToastDuration(json["duration"]),
             arguments = json.get("arguments", None),
-            scenario = get_enum(ToastScenario, json.get("scenario", None)),
+            scenario = None if not json.get("scenario") else ToastScenario(json["scenario"]),
             group_id = str(json.get("group_id", "")) or None,
             toast_id = str(json.get("toast_id", "")) or None,
             show_popup = bool(json.get("show_popup", True)),

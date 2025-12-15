@@ -22,15 +22,12 @@
 
 __all__ = [
     "resolve_uri",
-    "xml",
-    "get_enum",
     "ToastResult"
 ]
 
 from toasted.enums import ToastElementType, ToastDismissReason
 
 from abc import ABC, abstractmethod
-from enum import Enum
 from typing import (
     Dict,
     NamedTuple, 
@@ -38,8 +35,7 @@ from typing import (
     Any, 
     Tuple, 
     Type, 
-    List, 
-    TypeVar, 
+    List,
     Union,
     Literal
 )
@@ -50,6 +46,7 @@ from pathlib import Path
 from base64 import b64decode
 import string
 from io import BytesIO
+from xml.etree import ElementTree as ET
 
 from PIL import Image, ImageFont, ImageDraw, ImageColor
 
@@ -60,8 +57,6 @@ else:
     class Proxy:
         def __getattribute__(self, _): raise Exception("Toasted is not supported on non-Windows platforms.") # noqa: E501
     winreg = SystemDataPaths = Proxy()
-
-T = TypeVar('T')
 
 
 class ToastThemeInfo(NamedTuple):
@@ -107,7 +102,7 @@ def resolve_uri(
             )
         return get_icon_from_font(
             charcode = int(hex_value, 16),
-            font_file = get_icon_font_default(),
+            font_file = str(get_icon_font_default()),
             foreground = ImageColor.getrgb(values.get("foreground", None) or "#000000FF"), # noqa: E501
             background = ImageColor.getrgb(values.get("background", None) or "#00000000"), # noqa: E501
             icon_padding = int(values.get("padding", None) or 0)
@@ -175,63 +170,13 @@ def get_theme_query_parameters(
     }
 
 
-def xmldata_to_content(
-    content : Union[None, str, List["XMLData"], "XMLData"]
-):
-    if not content:
-        yield None
-    elif isinstance(content, list):
-        for i in content:
-            for j in xmldata_to_content(i):
-                yield j
-    elif isinstance(content, XMLData):
-        yield "<{0}{1}>".format(content.tag, attrs_to_string(content.attrs or {}))
-        for i in xmldata_to_content(content.content):
-            yield i
-        yield "</{0}>".format(content.tag)
-    else:
-        yield content
-
-
-def attrs_to_string(
-    attrs : Dict[str, Any]
-) -> str:
-    attr = ""
-    for k, v in attrs.items():
-        value = ""
-        if v is None:
-            continue
-        if isinstance(v, bool):
-            value = str(v).lower()
-        elif isinstance(v, Enum):
-            value = str(v.value)
-        else:
-            value = str(v)
-        attr += " " + k.replace("_", "-") + "=\"" + value.replace("\"", "&quot;") + "\""
-    return attr
-
-
-def xml(element : str, _data : Optional[str] = None, **kwargs) -> str:
-    return \
-        "<" + element + attrs_to_string(kwargs) + ">" + \
-        (_data or "") + \
-        "</" + element + ">"
-
-
-def get_enum(enum : Type[Enum], value : Any, default : T = None) -> Union[Enum, T]:
-    return next(
-        (y for x, y in enum._member_map_.items() if (y.value == value) 
-        or (y == value) or (x == value)), default
-    )
-
-
 def get_icon_from_font(
     charcode : int,
     font_file : Union[str, bytes],
     icon_size : int = 64,
     icon_padding : int = 0,
-    background : "Image._Color" = (0, 0, 0, 0),
-    foreground : "Image._Color" = (255, 255, 255, 255),
+    background : "Image._Color" = (0, 0, 0, 0), # type: ignore
+    foreground : "Image._Color" = (255, 255, 255, 255), # type: ignore
     icon_format : str = "png"
 ) -> bytes:
     """
@@ -401,7 +346,7 @@ class ToastBase(ABC):
     __slots__ = ()
 
     @abstractmethod
-    def to_xml_data(self) -> XMLData:
+    def to_xml(self) -> ET.Element:
         ...
     
     @classmethod
