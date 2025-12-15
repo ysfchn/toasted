@@ -32,6 +32,7 @@ __all__ = [
 
 from toasted.common import ToastElement
 from toasted.enums import (
+    ToastXMLTag,
     ToastElementType, 
     ToastTextAlign, 
     ToastTextStyle, 
@@ -41,7 +42,7 @@ from toasted.enums import (
 from typing import Optional, Dict, Any, Union
 from xml.etree import ElementTree as ET
 
-class Text(ToastElement, etype = ToastElementType.VISUAL, ename = "text"):
+class Text(ToastElement, slot = ToastElementType.VISUAL, tag = ToastXMLTag.TEXT):
     """
     Specifies text used in the toast template.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-text
@@ -79,9 +80,14 @@ class Text(ToastElement, etype = ToastElementType.VISUAL, ename = "text"):
             This property will only take effect if the text is inside an subgroup.
     """
     __slots__ = (
-        "content", "id", "style", "align", 
-        "is_attribution", "is_center", "max_lines", 
-        "min_lines", 
+        "content",
+        "id",
+        "style",
+        "align",
+        "is_attribution",
+        "is_center",
+        "max_lines",
+        "min_lines"
     )
 
     def __init__(
@@ -113,8 +119,8 @@ class Text(ToastElement, etype = ToastElementType.VISUAL, ename = "text"):
             x.align = ToastTextAlign(data["align"])
         return x
 
-    def to_xml(self):
-        el = ET.Element("text")
+    def _to_xml(self):
+        el = ET.Element(self._xmltag())
         el.text = self.content
         if self.id:
             el.attrib["id"] = str(self.id)
@@ -133,7 +139,7 @@ class Text(ToastElement, etype = ToastElementType.VISUAL, ename = "text"):
         return el
 
 
-class Image(ToastElement, etype = ToastElementType.VISUAL, ename = "image"):
+class Image(ToastElement, slot = ToastElementType.VISUAL, tag = ToastXMLTag.IMAGE, uri_keys = ("src", "spritesheet-src")):
     """
     Specifies an image used in the toast template.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-image
@@ -156,8 +162,28 @@ class Image(ToastElement, etype = ToastElementType.VISUAL, ename = "image"):
             None or default value: The image is displayed inside the toast.
         is_circle:
             If True, the image is cropped into a circle.
+        sprite_source:
+            Shouldn't be used. Was in use for unsupported [My People](https://learn.microsoft.com/en-us/windows/uwp/contacts-and-calendar/my-people-notifications) notifications.
+            This won't work in Windows 11 and Windows 10 versions with KB5034203 update. sprite_* properties
+            are only implemented here as a reference.
+        sprite_height:
+            Shouldn't be used. Frame height for each sprite. Only required for spritesheet animations.
+        sprite_fps:
+            Shouldn't be used. Frames per second (FPS), maximum 120. Only required for spritesheet animations.
+        sprite_index:
+            Shouldn't be used. Starting frame index of the sprite. Only required for spritesheet animations.
     """
-    __slots__ = ("source", "id", "alt", "placement", "is_circle", )
+    __slots__ = (
+        "source",
+        "id",
+        "alt",
+        "placement",
+        "is_circle",
+        "sprite_source",
+        "sprite_height",
+        "sprite_fps",
+        "sprite_index"
+    )
 
     def __init__(
         self, 
@@ -165,13 +191,21 @@ class Image(ToastElement, etype = ToastElementType.VISUAL, ename = "image"):
         id : Optional[int] = None,
         alt : Optional[str] = None,
         placement : Optional[ToastImagePlacement] = None,
-        is_circle : bool = False
+        is_circle : bool = False,
+        sprite_source : Optional[str] = None,
+        sprite_height : Optional[int] = None,
+        sprite_fps : Optional[int] = None,
+        sprite_index : Optional[int] = None
     ) -> None:
         self.source = source
         self.id = None if id is None else int(id)
         self.alt = alt
         self.placement = placement
         self.is_circle = is_circle
+        self.sprite_source = sprite_source
+        self.sprite_height = sprite_height
+        self.sprite_fps = sprite_fps
+        self.sprite_index = sprite_index
 
     @classmethod
     def from_json(cls, data: Dict[str, Any]):
@@ -180,8 +214,8 @@ class Image(ToastElement, etype = ToastElementType.VISUAL, ename = "image"):
             x.placement = ToastImagePlacement(data["placement"])
         return x
 
-    def to_xml(self):
-        el = ET.Element("image")
+    def _to_xml(self):
+        el = ET.Element(self._xmltag())
         if self.id:
             el.attrib["id"] = str(self.id)
         el.attrib["src"] = self.source
@@ -191,10 +225,16 @@ class Image(ToastElement, etype = ToastElementType.VISUAL, ename = "image"):
             el.attrib["placement"] = self.placement.value
         if self.is_circle:
             el.attrib["hint-crop"] = "circle"
+        if self.sprite_source:
+            assert self.sprite_fps and self.sprite_index and self.sprite_height, "All sprite parameters must be provided if an spritesheet was given."
+            el.attrib["spritesheet-src"] = self.sprite_source
+            el.attrib["spritesheet-height"] = str(self.sprite_height)
+            el.attrib["spritesheet-fps"] = str(self.sprite_fps)
+            el.attrib["spritesheet-startingFrame"] = str(self.sprite_index)
         return el
 
 
-class Progress(ToastElement, etype = ToastElementType.VISUAL, ename = "progress"):
+class Progress(ToastElement, slot = ToastElementType.VISUAL, tag = ToastXMLTag.PROGRESS):
     """
     Specifies a progress bar for a toast notification. Only supported on toasts on 
     Desktop, build 15063 or later.
@@ -215,7 +255,12 @@ class Progress(ToastElement, etype = ToastElementType.VISUAL, ename = "progress"
             An optional string to be displayed instead of the default percentage 
             string. If this isn't provided, something like "70%" will be displayed.
     """
-    __slots__ = ("value", "status", "title", "display_value", )
+    __slots__ = (
+        "value",
+        "status",
+        "title",
+        "display_value"
+    )
 
     def __init__(
         self, 
@@ -229,8 +274,8 @@ class Progress(ToastElement, etype = ToastElementType.VISUAL, ename = "progress"
         self.title = title
         self.display_value = display_value
 
-    def to_xml(self):
-        el = ET.Element("progress")
+    def _to_xml(self):
+        el = ET.Element(self._xmltag())
         el.attrib["value"] = "indeterminate" if (self.value == -1) else str(self.value)
         if self.title:
             el.attrib["title"] = self.title
@@ -240,7 +285,7 @@ class Progress(ToastElement, etype = ToastElementType.VISUAL, ename = "progress"
         return el
 
 
-class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
+class Button(ToastElement, slot = ToastElementType.ACTION, tag = ToastXMLTag.BUTTON, uri_keys = ("imageUri", )):
     """
     Specifies a button shown in a toast.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-action
@@ -271,10 +316,20 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
         is_protocol:
             If True, launch an application or visit a link when this button 
             has clicked. To make it work, also specify a URI in "arguments" parameter.
+        hint_action_id:
+            An arbitrary string to identify the action which is reserved to use for
+            telemetry.
     """
     __slots__ = (
-        "content", "arguments", "is_context", "icon", 
-        "input_id", "style", "tooltip", "is_protocol",
+        "content",
+        "arguments",
+        "is_context",
+        "icon", 
+        "input_id",
+        "style",
+        "tooltip",
+        "is_protocol",
+        "hint_action_id"
     )
 
     def __init__(
@@ -286,7 +341,8 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
         input_id : Optional[str] = None,
         style : Optional[ToastButtonStyle] = None,
         tooltip : Optional[str] = None,
-        is_protocol : bool = False
+        is_protocol : bool = False,
+        hint_action_id : Optional[str] = None
     ) -> None:
         self.content = content
         self.arguments = arguments
@@ -296,6 +352,7 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
         self.style = style
         self.tooltip = tooltip
         self.is_protocol = is_protocol
+        self.hint_action_id = hint_action_id
 
     @classmethod
     def from_json(cls, data: Dict[str, Any]):
@@ -304,8 +361,8 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
             x.style = ToastButtonStyle(data["style"])
         return x
 
-    def to_xml(self):
-        el = ET.Element("action")
+    def _to_xml(self):
+        el = ET.Element(self._xmltag())
         el.attrib["content"] = self.content
         el.attrib["arguments"] = self.arguments
         el.attrib["activationType"] = "foreground" if not self.is_protocol else "protocol"
@@ -323,10 +380,12 @@ class Button(ToastElement, etype = ToastElementType.ACTION, ename = "button"):
             el.attrib["hint-buttonStyle"] = self.style.value
         if self.tooltip:
             el.attrib["hint-toolTip"] = self.tooltip
+        if self.hint_action_id:
+            el.attrib["hint-actionId"] = self.hint_action_id
         return el
 
 
-class Header(ToastElement, etype = ToastElementType.HEADER, ename = "header"):
+class Header(ToastElement, slot = ToastElementType.HEADER, tag = ToastXMLTag.HEADER):
     """
     Specifies a custom header that groups multiple notifications together within 
     Action Center.
@@ -343,7 +402,11 @@ class Header(ToastElement, etype = ToastElementType.HEADER, ename = "header"):
             A developer-defined string of arguments that is returned to the app 
             when the user clicks this header. Cannot be null.
     """
-    __slots__ = ("id", "title", "arguments", )
+    __slots__ = (
+        "id",
+        "title",
+        "arguments"
+    )
 
     def __init__(
         self,
@@ -355,8 +418,8 @@ class Header(ToastElement, etype = ToastElementType.HEADER, ename = "header"):
         self.title = title
         self.arguments = arguments
     
-    def to_xml(self):
-        el = ET.Element("header")
+    def _to_xml(self):
+        el = ET.Element(self._xmltag())
         el.attrib["id"] = self.id
         el.attrib["title"] = self.title
         el.attrib["arguments"] = self.arguments
@@ -364,7 +427,7 @@ class Header(ToastElement, etype = ToastElementType.HEADER, ename = "header"):
         return el
 
 
-class Input(ToastElement, etype = ToastElementType.ACTION, ename = "input"):
+class Input(ToastElement, slot = ToastElementType.ACTION, tag = ToastXMLTag.INPUT):
     """
     Specifies an text box, shown in a toast notification.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-input
@@ -379,7 +442,12 @@ class Input(ToastElement, etype = ToastElementType.ACTION, ename = "input"):
         default:
             Default value shown in the input.
     """
-    __slots__ = ("id", "placeholder", "title", "default", )
+    __slots__ = (
+        "id",
+        "placeholder",
+        "title",
+        "default"
+    )
 
     def __init__(
         self,
@@ -393,8 +461,8 @@ class Input(ToastElement, etype = ToastElementType.ACTION, ename = "input"):
         self.title = title
         self.default = default
     
-    def to_xml(self):
-        el = ET.Element("input")
+    def _to_xml(self):
+        el = ET.Element(self._xmltag())
         el.attrib["id"] = self.id
         el.attrib["type"] = "text"
         if self.title:
@@ -406,7 +474,7 @@ class Input(ToastElement, etype = ToastElementType.ACTION, ename = "input"):
         return el
 
 
-class Select(ToastElement, etype = ToastElementType.ACTION, ename = "select"):
+class Select(ToastElement, slot = ToastElementType.ACTION, tag = ToastXMLTag.INPUT):
     """
     Specifies an selection menu, shown in a toast notification.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-input
@@ -422,7 +490,12 @@ class Select(ToastElement, etype = ToastElementType.ACTION, ename = "select"):
         default:
             Key of the option that will be shown as selected in the select menu.
     """
-    __slots__ = ("id", "options", "title", "default", )
+    __slots__ = (
+        "id",
+        "options",
+        "title",
+        "default"
+    )
 
     def __init__(
         self,
@@ -436,8 +509,8 @@ class Select(ToastElement, etype = ToastElementType.ACTION, ename = "select"):
         self.options = options
         self.default = default
 
-    def to_xml(self):
-        el = ET.Element("input")
+    def _to_xml(self):
+        el = ET.Element(self._xmltag())
         el.attrib["id"] = self.id
         el.attrib["type"] = "selection"
         if self.title:

@@ -29,7 +29,6 @@ from toasted.common import (
     get_windows_build,
     ToastResult,
     resolve_uri,
-    get_theme_query_parameters,
 )
 from toasted.elements import Button, Image, Text
 from toasted.filesystem import ToastMediaFileSystem
@@ -50,7 +49,7 @@ import inspect
 import sys
 from typing import (
     Any, Callable, Dict, Optional, Tuple, 
-    List, Union, Literal, Set
+    List, Union, Set
 )
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -101,11 +100,6 @@ ToastElementListItemJSON = Union[
     List[List[Dict[str, Any]]]
 ]
 
-LEVEL_START = "LEVEL_START"
-LEVEL_END = "LEVEL_END"
-
-ToastElementWalkLevelType = Literal["LEVEL_START", "LEVEL_END"]
-
 class Toast:
     """
     Represents a toast.
@@ -149,6 +143,10 @@ class Toast:
             from Action Center.
         toast_id:
             ID of the toast. Used for deleting a notification from Action Center.
+        contact_info:
+            Shouldn't be used. Was in use for unsupported [My People](https://learn.microsoft.com/en-us/windows/uwp/contacts-and-calendar/my-people-notifications) notifications.
+            This won't work in Windows 11 and Windows 10 versions with KB5034203 update.
+            Sets the sending contact information.
         show_popup:
             Gets or sets whether a toast's pop-up UI is displayed on the user's screen. 
             If pop-up is not shown, the notification will be added to Action Center 
@@ -218,6 +216,7 @@ class Toast:
         "expiration_time",
         "group_id",
         "toast_id",
+        "contact_info",
         "_callback_result",
         "_callback_show",
         "_imp_manager",
@@ -247,7 +246,8 @@ class Toast:
         remote_media : bool = True,
         add_query_params : bool = False,
         expiration_time : Optional[datetime] = None,
-        app_id : Optional[str] = None
+        app_id : Optional[str] = None,
+        contact_info : Optional[str] = None
     ) -> None:
         super().__init__()
         self.elements : List[ToastElementListItem] = []
@@ -265,6 +265,7 @@ class Toast:
         self.group_id = group_id
         self.toast_id = toast_id
         self.app_id = app_id
+        self.contact_info = contact_info
         self._callback_result : ToastResultCallbackType = None
         self._callback_show : ToastShowCallbackType = None
         self._imp_manager : "ToastNotifier" = None
@@ -307,10 +308,6 @@ class Toast:
         """
         Create XML representing the toast.
         """
-        query_params = None if not self.add_query_params else get_theme_query_parameters(
-            info = self.get_theme_info()
-        )
-
         root = ET.Element("toast")
         if self.arguments:
             root.attrib["launch"] = self.arguments
@@ -324,49 +321,77 @@ class Toast:
         visual = ET.Element("visual")
         actions = ET.Element("actions")
         binding = ET.Element("binding")
+        binding_exp = ET.Element("binding")
         binding.attrib["template"] = "ToastGeneric"
+        binding_exp.attrib["template"] = "ToastGeneric"
+        binding_exp.attrib["experienceType"] = "shoulderTap"
         visual.append(binding)
         root.append(visual)
 
+        query_params = None if not self.add_query_params else self.get_theme_info().as_params()
+
         # Iterate through elements and add them to the binding element.
-        for element in self.elements:
-            if isinstance(element, list):
+        for item in self.elements:
+            if isinstance(item, list):
                 group = ET.Element("group")
-                for subgroup in element:
+                for subgroup in item:
                     sgroup = ET.Element("subgroup")
                     assert isinstance(subgroup, list), "Groups can only contain subgroups."
-                    for item in subgroup:
-                        assert isinstance(item, (Image, Text)), "Subgroups can only contain Image or Text elements."
-                        el = item.to_xml()
-                        if el.attrib.get("src"):
-                            el.attrib["src"] = self._resolve_uri(el.attrib["src"], allow_fs, query_params)
+                    for child in subgroup:
+                        assert isinstance(child, (Image, Text)), "Subgroups can only contain Image or Text elements."
+                        el = child._to_xml()
+
+                        # Resolve URIs found in the element.
+                        for arg in child._euri:
+                            if el.attrib.get(arg):
+                                el.attrib[arg] = self._resolve_uri(el.attrib[arg], allow_fs, query_params)
                         sgroup.append(el)
                     group.append(sgroup)
                 binding.append(group)
             else:
-                assert isinstance(element, ToastElement), "Toasts must contain of ToastElement objects."
-                el = element.to_xml()
-                if element._etype == ToastElementType.ACTION:
-                    if el.attrib.get("imageUri"):
-                        el.attrib["imageUri"] = self._resolve_uri(el.attrib["imageUri"], allow_fs, query_params)
+                assert isinstance(item, ToastElement), "Toasts must contain of ToastElement objects."
+                el = item._to_xml()
+                is_spritesheet = False
+
+                # Resolve URIs found in the element.
+                for arg in item._euri:
+                    if el.attrib.get(arg):
+                        if arg == "spritesheet-src":
+                            assert self.contact_info, "My People notifications require a contact info to be set with Toast.contact_info, otherwise remove the sprite from the image."
+                            is_spritesheet = True
+                        el.attrib[arg] = self._resolve_uri(el.attrib[arg], allow_fs, query_params)
+                if item._etype == ToastElementType.ACTION:
                     actions.append(el)
-                elif element._etype == ToastElementType.HEADER:
+                elif item._etype == ToastElementType.HEADER:
                     root.append(el)
+                elif is_spritesheet:
+                    binding_exp.append(el)
                 else:
-                    if el.attrib.get("src"):
-                        el.attrib["src"] = self._resolve_uri(el.attrib["src"], allow_fs, query_params)
                     binding.append(el)
+
                 # Enable custom styles on the toast itself if any button has a custom style.
-                if isinstance(element, Button):
-                    if element.style:
+                if isinstance(item, Button):
+                    if item.style:
                         root.attrib["useButtonStyle"] = "true"
         if len(actions):
             root.append(actions)
+
+        if self.contact_info:
+            assert self.contact_info.startswith("tel:") or self.contact_info.startswith("mailto:") or self.contact_info.startswith("remoteid:"), \
+                "Toast.contact_info must start with 'tel:', 'mailto:' or 'remoteid:' if given."
+
+        if len(binding_exp) and self.contact_info:
+            visual.append(binding_exp)
+            root.attrib["hint-people"] = self.contact_info
+
+        if len(actions) > 5:
+            raise ValueError("A Toast notification can only have up to 5 actions.")
 
         # Notification sound
         audio = ET.Element("audio")
         if self.sound:
             audio.attrib["src"] = self._resolve_uri(self.sound, allow_fs, query_params)
+
         # If custom sound has provided, mute the original toast 
         # sound to None since we use our own sound solution.
         if self._xml_mute_sound or self.uses_custom_sound:
@@ -377,20 +402,24 @@ class Toast:
 
 
     def _resolve_uri(self, uri: str, allow_fs: bool, query_params: Optional[Dict[str, str]]):
-        if not self._fs:
-            self._fs = ToastMediaFileSystem()
-        resolved = resolve_uri(uri, self.remote_media)
-        if isinstance(resolved, bytes):
+        resolved = resolve_uri(uri)
+        if resolved.type == "hex":
             if allow_fs:
-                return self._fs.put(resolved)
-        elif isinstance(resolved, str):
+                if not self._fs:
+                    self._fs = ToastMediaFileSystem()
+                return self._fs.put(bytes.fromhex(resolved.value))
+        elif resolved.type == "remote":
             if allow_fs:
+                if not self.remote_media:
+                    raise ValueError(f"Downloading from remote URI '{resolved.value}' was disallowed by `Toast.remote_media` property.")
+                if not self._fs:
+                    self._fs = ToastMediaFileSystem()
                 return self._fs.get(
-                    url = resolved,
+                    url = resolved.value,
                     query_params = query_params
                 )
         else:
-            return resolved.resolve().as_uri()
+            return resolved.value
         return uri
 
 
@@ -398,7 +427,7 @@ class Toast:
         self,
         download_media: bool = False
     ) -> str:
-        return ET.tostring(self._to_xml(download_media), encoding = "utf-8")
+        return ET.tostring(self._to_xml(download_media), encoding = "unicode")
 
 
     @staticmethod
@@ -497,19 +526,27 @@ class Toast:
 
 
     @property
-    def can_send_from_app_id(self) -> bool:
+    def can_receive(self) -> bool:
         """
-        Returns True if notifications (for current app ID) are enabled on the device. 
+        Returns True if notifications for current app ID are enabled on the device. 
+        Otherwise, False.
+        """
+        return self.can_receive_from(self.app_id)
+
+    
+    @staticmethod
+    def can_receive_from(app_id: str):
+        """
+        Returns True if notifications for given app ID are enabled on the device. 
         Otherwise, False.
         """
         try:
             return \
-                ToastNotificationManager.create_toast_notifier(self.app_id).setting \
+                ToastNotificationManager.create_toast_notifier(app_id).setting \
                 == NotificationSetting.ENABLED
         except OSError as e:
             if e.winerror == -2147023728:
-                # App ID is not registered in the registry.
-                # See register_app_id().
+                # App ID is not registered in the registry. See register_app_id().
                 # TODO: maybe return a value other than False?
                 return False
             raise e

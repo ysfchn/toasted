@@ -43,6 +43,14 @@ class ToastElementType(Enum):
     ACTION = 2
     HEADER = 3
 
+class ToastXMLTag(Enum):
+    TEXT = "text"
+    IMAGE = "image"
+    PROGRESS = "progress"
+    BUTTON = "button"
+    HEADER = "header"
+    INPUT = "input"
+
 
 # --------------------
 # API

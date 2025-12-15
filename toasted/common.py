@@ -25,21 +25,22 @@ __all__ = [
     "ToastResult"
 ]
 
-from toasted.enums import ToastElementType, ToastDismissReason
+from toasted.enums import ToastElementType, ToastDismissReason, ToastXMLTag
 
 from abc import ABC, abstractmethod
 from typing import (
     Dict,
-    NamedTuple, 
-    Optional, 
-    Any, 
+    NamedTuple,
+    Any,
+    Sequence,
+    Set, 
     Tuple, 
     Type, 
     List,
     Union,
     Literal
 )
-from os import environ, sep
+from os import environ
 import sys
 from urllib.parse import urlsplit, urlunsplit, parse_qsl
 from pathlib import Path
@@ -63,80 +64,166 @@ class ToastThemeInfo(NamedTuple):
     contrast : Literal["high", "standard"]
     lang : str
     theme : Literal["dark", "light"]
+    
+    def as_params(self):
+        return {
+            "ms-contrast": self.contrast,
+            "ms-lang": self.lang,
+            "ms-theme": self.theme
+        }
+
+
+class URIResult(NamedTuple):
+    value: str
+    type: Literal["local", "remote", "hex", "resource"]
 
 
 def resolve_uri(
-    uri : str,
-    allow_remote : bool = False
-) -> Union[str, Path, bytes]:
+    uri : str
+) -> URIResult:
     """
-    Resolve an file system or remote URI, similar how it is done in UWP apps.
+    Resolve a local file path or an URI locating a file or remote source.
     """
     split = urlsplit(uri, allow_fragments = False)
-    path_part = (split.netloc + split.path).removeprefix("/")
+
+    # See here for all file path formats on Windows:
+    # https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats
+    # UNC and DOS paths are not supported.
+
+    # Relative file path.
+    # e.g. "./myfolder/myfile"
+    if not split.scheme:
+        return URIResult(
+            value = str(Path(split.path).resolve().absolute()),
+            type = "local"
+        )
+
+    # Drive letters as a scheme, should also work on mixed slashes due to URL normalization above.
+    # e.g. "C:\Users\ysfchn\Desktop"
+    elif (len(split.scheme) == 1) and (ord(split.scheme) in range(97, 123)):
+        return URIResult(
+            value = str(Path(f"{split.scheme}:{split.path}").resolve().absolute()),
+            type = "local"
+        )
+
+    # UWP apps has additional schemes:
     # https://learn.microsoft.com/en-us/windows/uwp/app-resources/uri-schemes
-    # If scheme is "ms-appx", path is relative to current working directory.
-    if split.scheme == "ms-appx":
-        return Path().cwd() / path_part
-    # If scheme is "file", path is relative to system root.
+
+    # "ms-appx" scheme is relative to the installation directory, since there is no
+    # installation in our case, we use current working directory as a base.
+    # e.g. "ms-appx:///images/logo.png"
+    
+    elif split.scheme == "ms-appx":
+        path = Path(split.netloc + split.path)
+
+        # Force all paths to be relative, even if it starts with a slash ("/").
+        # Other schemes should be used instead for working with absolute paths. 
+        return URIResult(
+            value = str((Path.cwd() / path.relative_to(path.anchor)).resolve().absolute()),
+            type = "local"
+        )
+
+    # "ms-appdata" scheme returns the location of appdata folder.
+    # First segment of the path must be one of these: "local", "roaming" or "temp"
+    # https://learn.microsoft.com/en-us/windows/uwp/app-resources/uri-schemes#path-ms-appdata
+    # e.g. "ms-appdata:///local/MyApp"
+
+    elif split.scheme == "ms-appdata":
+        path = Path(split.netloc + split.path)
+        path = path.relative_to(path.anchor)
+        reserved = path.parts[0]
+        path = path.relative_to(reserved)
+
+        base_path = None
+        if reserved == "local":
+            base_path = Path(environ["LOCALAPPDATA"])
+        elif reserved == "temp":
+            base_path = Path(environ["LOCALAPPDATA"]) / "Temp"
+        elif reserved == "roaming":
+            base_path = Path(environ["APPDATA"]) / "Roaming"
+
+        if not base_path:
+            raise ValueError(f"First segment must be 'local', 'temp' or 'roaming' on 'ms-appdata' URIs: '{uri}'")
+
+        resolved = (base_path / path).resolve()
+
+        # Microsoft says it is not allowed to go outside from the reserved folders,
+        # so let's do the same here.
+        if not resolved.is_relative_to(base_path):
+            raise ValueError(f"Visiting parent from a 'ms-appdata' path is not allowed: '{uri}'")
+
+        return URIResult(
+            value = str(resolved.absolute()),
+            type = "local"
+        )
+
+    # "ms-winsoundevent" scheme is used for default toast notification sound enum,
+    # so we just return it as-is.
+    # e.g. "ms-winsoundevent:Notification.SMS"
+
+    elif split.scheme == "ms-winsoundevent":
+        return URIResult(
+            value = f"ms-winsoundevent:{split.path}",
+            type = "resource"
+        )
+
+    # "file" scheme should resolve path same as without the scheme.
     elif split.scheme == "file":
-        return Path(sep).absolute() / path_part
-    # If scheme is "data", return bytes.
+        # Parsing "file://C:/Users" makes netloc to have "C:", but adding another forward slash
+        # into "file://" scheme (like "file:///C:/Users") breaks the splitting, since netloc would become empty.
+        # So, we manually remove the slash to make 3 slashes behave same with 2 slashes if there is no netloc.
+        path = Path(split.netloc + split.path if split.netloc else split.netloc + split.path.removeprefix("/"))
+        return URIResult(
+            value = str(path.resolve().absolute()),
+            type = "local"
+        )
+
+    # If scheme is "http" or "https", left as-is.
+    elif (split.scheme == "http") or (split.scheme == "https"):
+        return URIResult(
+            value = urlunsplit(split),
+            type = "remote"
+        )
+
+    # Allow returning arbitrary bytes if scheme is "data" to avoid needing to have an actual
+    # file on filesystem. Should be only used for small files though.
+    # e.g. "data:text/plain;base64,SGVsbG8sIFdvcmxkIQ=="
     elif split.scheme == "data":
-        meta, data = path_part.split(",", 1)
-        _, data_type = ";" if ";" not in meta else meta.split(";", 1)
-        if data_type != "base64":
-            raise ValueError(
-                "Data URI must be in 'base64' type: \"{0}\"".format(uri)
+        data_uri = split.path.removeprefix("/")
+
+        if data_uri.count(";base64,") == 1:
+            return URIResult(
+                value = b64decode(data_uri.split(";base64,")[-1]).hex(),
+                type = "hex"
             )
-        return b64decode(data)
-    # If scheme is "icon", extract icon from Windows icon font.
+
+        raise ValueError(f"Invalid base64 data URI: '{uri}'")
+
+    # Extract icons from Windows icon.
     elif split.scheme == "icon":
         values = dict(parse_qsl(split.query))
-        hex_value = path_part.removeprefix("U+").removeprefix("0x")
+        hex_value = split.path.removeprefix("/").removeprefix("U+").removeprefix("0x")
         hex_digits = set(string.hexdigits)
+
         if not all(c in hex_digits for c in hex_value):
             raise ValueError(
-                "Icon URI path needs to be a hexadecimal " +
-                "value of character point: \"{0}\"".format(uri)    
+                f"Icon URI path needs to be a hex value of character point: '{uri}'"
             )
-        return get_icon_from_font(
+
+        icon_data = get_icon_from_font(
             charcode = int(hex_value, 16),
             font_file = str(get_icon_font_default()),
             foreground = ImageColor.getrgb(values.get("foreground", None) or "#000000FF"), # noqa: E501
             background = ImageColor.getrgb(values.get("background", None) or "#00000000"), # noqa: E501
             icon_padding = int(values.get("padding", None) or 0)
         )
-    # If scheme is "http" or "https", left as-is.
-    elif (split.scheme == "https") or (split.scheme == "http"):
-        if not allow_remote:
-            raise ValueError(
-                "A remote URI has been provided while it is not allowed because " +
-                "Toast.remote_media is True: \"{0}\"".format(uri)
-            )
-        return urlunsplit(split)
-    # If scheme is "ms-appdata", path is relative to appdata which is based
-    # on the first part of the path ("local", "roaming" or "temp").
-    # https://learn.microsoft.com/en-us/windows/uwp/app-resources/uri-schemes#path-ms-appdata
-    elif split.scheme == "ms-appdata":
-        if path_part.startswith("local/"):
-            return (
-                Path(environ["LOCALAPPDATA"]).resolve() / 
-                path_part.removeprefix("local/")
-            )
-        elif path_part.startswith("roaming/"):
-            return (
-                Path(environ["APPDATA"]).resolve() / "Roaming" /
-                path_part.removeprefix("roaming/")
-            )
-        elif path_part.startswith("temp/"):
-            return (
-                Path(environ["LOCALAPPDATA"]).resolve() / "Temp" /
-                path_part.removeprefix("temp/")
-            )
-    raise ValueError(
-        "Unsupported or invalid URI: \"{0}\"".format(uri)
-    )
+
+        return URIResult(
+            value = icon_data.hex(),
+            type = "hex"
+        )
+
+    raise ValueError(f"Invalid or unsupported URI: '{uri}'")
 
 
 def is_in_venv() -> bool:
@@ -155,19 +242,6 @@ def is_in_venv() -> bool:
         environ.get("VIRTUAL_ENV", None) or \
         getattr(sys, "real_prefix", sys.base_prefix) != sys.prefix
     )
-
-
-def get_theme_query_parameters(
-    info : ToastThemeInfo
-) -> Dict[str, str]:
-    """
-    Convert ToastThemeInfo object to query parameters.
-    """
-    return {
-        "ms-contrast": info.contrast,
-        "ms-lang": info.lang,
-        "ms-theme": info.theme
-    }
 
 
 def get_icon_from_font(
@@ -234,11 +308,16 @@ def get_icon_fonts_path() -> List[Tuple[Literal["mdl2", "fluent"], Path]]:
         winreg.HKEY_LOCAL_MACHINE, 
         "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts"
     )
-    user_fonts = winreg.OpenKey(
-        winreg.HKEY_CURRENT_USER, 
-        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts"
-    )
-    system_fonts_path = Path(SystemDataPaths.get_default().fonts)
+    user_fonts = None
+    try:
+        user_fonts = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, 
+            "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts"
+        )
+    except OSError as ore:
+        if ore.errno != 2:
+            raise ore
+    # system_fonts_path = Path(SystemDataPaths.get_default().fonts)
     # Check for system fonts.
     system_fonts_count = winreg.QueryInfoKey(system_fonts)[1]
     for i in range(system_fonts_count):
@@ -246,17 +325,18 @@ def get_icon_fonts_path() -> List[Tuple[Literal["mdl2", "fluent"], Path]]:
         for k, v in fonts.items():
             if name == v:
                 font_path = Path(file)
-                if not font_path.is_absolute():
-                    font_path = system_fonts_path.joinpath(font_path)
+                # if not font_path.is_absolute():
+                #    font_path = system_fonts_path.joinpath(font_path)
                 available.append((k, font_path))
     system_fonts.Close()
     # Check for user fonts.
-    user_fonts_count = winreg.QueryInfoKey(user_fonts)[1]
-    for i in range(user_fonts_count):
-        name, file, _ = winreg.EnumValue(user_fonts, i)
-        for k, v in fonts.items():
-            if name == v:
-                available.append((k, Path(file)))
+    if user_fonts:
+        user_fonts_count = winreg.QueryInfoKey(user_fonts)[1]
+        for i in range(user_fonts_count):
+            name, file, _ = winreg.EnumValue(user_fonts, i)
+            for k, v in fonts.items():
+                if name == v:
+                    available.append((k, Path(file)))
     return available
 
 
@@ -307,46 +387,11 @@ def get_icon_font_default() -> Path:
     raise ValueError("Couldn't find an available icon font.")
 
 
-class XMLData(NamedTuple):
-    tag : str
-    content : Union[None, str, List["XMLData"], "XMLData"] = None
-    attrs : Optional[Dict[str, Any]] = None
-    source_replace : Optional[str] = None
-
-
-class ToastPayload(NamedTuple):
-    uses_custom_style : Optional[bool]
-    custom_sound_file : str
-    base_path : str
-    arguments : Optional[str]
-    duration : Optional[str]
-    scenario : Optional[str]
-    timestamp : Optional[str]
-    visual_xml : str
-    actions_xml : str
-    other_xml : str
-
-
-
-class BindingKey(str):
-    def __new__(cls, value : str):
-        if value:
-            if not isinstance(value, str):
-                raise TypeError(f"Unexpected type for binding key: {type(value)}")
-            if value.startswith("{") and value.endswith("}"):
-                pass
-            else:
-                raise ValueError(
-                    "Binding key values must start with '{' and end with '}'"
-                )
-        return super().__new__(cls, value)
-
-
 class ToastBase(ABC):
     __slots__ = ()
 
     @abstractmethod
-    def to_xml(self) -> ET.Element:
+    def _to_xml(self) -> ET.Element:
         ...
     
     @classmethod
@@ -382,19 +427,27 @@ class ToastResult:
 
 
 class ToastElement(ToastBase):
-    _registry : List[Tuple[str, Type["ToastElement"]]] = []
+    _registry : Set[Type["ToastElement"]] = set()
     _etype : ToastElementType
+    _euri : Sequence[str]
+    _ename : ToastXMLTag
 
-    def __init_subclass__(cls, ename : str, etype : ToastElementType, **kwargs) -> None:
+    def __init_subclass__(cls, tag : ToastXMLTag, slot : ToastElementType, uri_keys : Sequence[str] = (), **kwargs) -> None:
         super().__init_subclass__(**kwargs)
-        cls._etype = etype
-        cls._registry.append((ename, cls, ))
+        cls._etype = slot
+        cls._euri = uri_keys
+        cls._ename = tag
+        cls._registry.add(cls)
+
+    @classmethod
+    def _xmltag(cls):
+        return cls._ename.value
 
     @classmethod
     def _create_from_type(cls, _type : str, **kwargs) -> "ToastElement":
-        for x, y in cls._registry:
-            if x == _type:
-                return y.from_json(kwargs)
+        for r in cls._registry:
+            if r._ename.value == _type:
+                return r.from_json(kwargs)
         raise ValueError(
             f"Element couldn't found with name \"{_type}\"."
         )
