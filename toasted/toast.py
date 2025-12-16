@@ -86,7 +86,7 @@ else:
     ToastDismissedEventArgs = ToastFailedEventArgs = ToastNotifier = \
     NotificationSetting = NotificationData = Proxy()
 
-ToastDataType = Dict[str, str]
+ToastDataType = Dict[str, Any]
 ToastResultCallbackType = Optional[Callable[[ToastResult], None]]
 ToastShowCallbackType = Optional[Callable[[Optional[ToastDataType]], None]]
 
