@@ -1,0 +1,9 @@
+from typing import Any
+
+class IPropertyValue:
+    @classmethod
+    def _from(cls, value: Any, /) -> IPropertyValue: ...
+    def get_string(self) -> str: ...
+
+class EventRegistrationToken:
+    ...
