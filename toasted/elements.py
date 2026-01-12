@@ -32,8 +32,8 @@ __all__ = [
 
 from toasted.common import ToastElement
 from toasted.enums import (
-    ToastXMLTag,
-    ToastElementType, 
+    _ToastXMLTag,
+    _ToastElementType, 
     ToastTextAlign, 
     ToastTextStyle, 
     ToastButtonStyle, 
@@ -42,7 +42,7 @@ from toasted.enums import (
 from typing import Optional, Dict, Any, Union
 from xml.etree import ElementTree as ET
 
-class Text(ToastElement, slot = ToastElementType.VISUAL, tag = ToastXMLTag.TEXT):
+class Text(ToastElement, slot = _ToastElementType.VISUAL, tag = _ToastXMLTag.TEXT):
     """
     Specifies text used in the toast template.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-text
@@ -78,6 +78,8 @@ class Text(ToastElement, slot = ToastElementType.VISUAL, tag = ToastXMLTag.TEXT)
         min_lines:
             Gets or sets the minimum number of lines the text element must display. 
             This property will only take effect if the text is inside an subgroup.
+        is_wrap:
+            If text should be wrapped.
     """
     __slots__ = (
         "content",
@@ -99,7 +101,8 @@ class Text(ToastElement, slot = ToastElementType.VISUAL, tag = ToastXMLTag.TEXT)
         is_attribution : bool = False,
         is_center : bool = False,
         max_lines : Optional[int] = None,
-        min_lines : Optional[int] = None
+        min_lines : Optional[int] = None,
+        is_wrap : bool = False
     ) -> None:
         self.content = content
         self.id = None if id is None else int(id)
@@ -109,6 +112,7 @@ class Text(ToastElement, slot = ToastElementType.VISUAL, tag = ToastXMLTag.TEXT)
         self.align = align
         self.max_lines = max_lines
         self.min_lines = min_lines
+        self.is_wrap = is_wrap
 
     @classmethod
     def from_json(cls, data: Dict[str, Any]):
@@ -136,10 +140,12 @@ class Text(ToastElement, slot = ToastElementType.VISUAL, tag = ToastXMLTag.TEXT)
             el.attrib["hint-maxLines"] = str(self.max_lines)
         if self.min_lines:
             el.attrib["hint-minLines"] = str(self.min_lines)
+        if self.is_wrap:
+            el.attrib["hint-wrap"] = "true"
         return el
 
 
-class Image(ToastElement, slot = ToastElementType.VISUAL, tag = ToastXMLTag.IMAGE, uri_keys = ("src", "spritesheet-src")):
+class Image(ToastElement, slot = _ToastElementType.VISUAL, tag = _ToastXMLTag.IMAGE, uri_keys = ("src", "spritesheet-src")):
     """
     Specifies an image used in the toast template.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-image
@@ -234,7 +240,7 @@ class Image(ToastElement, slot = ToastElementType.VISUAL, tag = ToastXMLTag.IMAG
         return el
 
 
-class Progress(ToastElement, slot = ToastElementType.VISUAL, tag = ToastXMLTag.PROGRESS):
+class Progress(ToastElement, slot = _ToastElementType.VISUAL, tag = _ToastXMLTag.PROGRESS):
     """
     Specifies a progress bar for a toast notification. Only supported on toasts on 
     Desktop, build 15063 or later.
@@ -285,7 +291,7 @@ class Progress(ToastElement, slot = ToastElementType.VISUAL, tag = ToastXMLTag.P
         return el
 
 
-class Button(ToastElement, slot = ToastElementType.ACTION, tag = ToastXMLTag.BUTTON, uri_keys = ("imageUri", )):
+class Button(ToastElement, slot = _ToastElementType.ACTION, tag = _ToastXMLTag.ACTION, uri_keys = ("imageUri", )):
     """
     Specifies a button shown in a toast.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-action
@@ -385,7 +391,7 @@ class Button(ToastElement, slot = ToastElementType.ACTION, tag = ToastXMLTag.BUT
         return el
 
 
-class Header(ToastElement, slot = ToastElementType.HEADER, tag = ToastXMLTag.HEADER):
+class Header(ToastElement, slot = _ToastElementType.HEADER, tag = _ToastXMLTag.HEADER):
     """
     Specifies a custom header that groups multiple notifications together within 
     Action Center.
@@ -427,7 +433,7 @@ class Header(ToastElement, slot = ToastElementType.HEADER, tag = ToastXMLTag.HEA
         return el
 
 
-class Input(ToastElement, slot = ToastElementType.ACTION, tag = ToastXMLTag.INPUT):
+class Input(ToastElement, slot = _ToastElementType.ACTION, tag = _ToastXMLTag.INPUT):
     """
     Specifies an text box, shown in a toast notification.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-input
@@ -474,7 +480,7 @@ class Input(ToastElement, slot = ToastElementType.ACTION, tag = ToastXMLTag.INPU
         return el
 
 
-class Select(ToastElement, slot = ToastElementType.ACTION, tag = ToastXMLTag.INPUT):
+class Select(ToastElement, slot = _ToastElementType.ACTION, tag = _ToastXMLTag.INPUT):
     """
     Specifies an selection menu, shown in a toast notification.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-input

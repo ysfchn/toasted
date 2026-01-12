@@ -22,13 +22,15 @@
 
 __all__ = ["Toast"]
 
-from toasted.common import ( 
+from uuid import uuid4
+from toasted.common import (
     ToastElement,
+    ToastState,
     ToastThemeInfo,
     get_query_app_ids,
     get_windows_build,
-    ToastResult,
     resolve_uri,
+    _ToastContextState
 )
 from toasted.elements import Button, Image, Text
 from toasted.filesystem import ToastMediaFileSystem
@@ -37,68 +39,54 @@ from toasted.enums import (
     ToastDuration, 
     ToastScenario, 
     ToastSound, 
-    ToastElementType, 
+    _ToastElementType, 
     ToastNotificationMode, 
-    ToastDismissReason
+    ToastDismissReason,
+    ToastUpdateResult,
+    ToastNotificationSetting
 )
 
 import asyncio
 from datetime import datetime
 import locale
-import inspect
 import sys
 from typing import (
-    Any, Callable, Dict, Optional, Tuple, 
-    List, Union, Set
+    Any, Callable, Coroutine, Dict, Optional, Tuple, 
+    List, Union, cast, TYPE_CHECKING
 )
 from pathlib import Path
+from inspect import iscoroutinefunction
 from xml.etree import ElementTree as ET
 
-if sys.platform == "win32":
-    import winreg
-    import winsound
-    from ctypes import windll
+import winreg
+import winsound
+from ctypes import windll
 
-    from winrt.system import Object  # pyright: ignore[reportMissingImports]
-    from winrt.windows.foundation import IPropertyValue, EventRegistrationToken  # pyright: ignore[reportMissingImports]
-    from winrt.windows.ui.viewmanagement import (  # pyright: ignore[reportMissingImports]
-        AccessibilitySettings, 
-        UISettings, 
-        UIColorType
-    )
-    import winrt.windows.data.xml.dom as dom  # pyright: ignore[reportMissingImports]
-    from winrt.windows.ui.notifications import (  # pyright: ignore[reportMissingImports]
-        ToastNotification, 
-        ToastNotificationManager, 
-        ToastActivatedEventArgs, 
-        ToastDismissedEventArgs, 
-        ToastFailedEventArgs,
+from winrt.windows.foundation import IPropertyValue
+from winrt.windows.ui.viewmanagement import (
+    AccessibilitySettings, 
+    UISettings, 
+    UIColorType
+)
+import winrt.windows.data.xml.dom as dom
+from winrt.windows.ui.notifications import (
+    ToastNotificationManager,
+    ToastActivatedEventArgs,
+    NotificationData,
+    ToastNotification
+)
+
+if TYPE_CHECKING:
+    from winrt.windows.ui.notifications import (
         ToastNotifier,
-        NotificationSetting,
-        NotificationData
+        ToastNotificationHistory,
+        ToastDismissedEventArgs, 
+        ToastFailedEventArgs
     )
-else:
-    class Proxy:
-        def __getattribute__(self, _): raise Exception("Toasted is not supported on non-Windows platforms.") # noqa: E501
-    winreg = winsound = windll = Object = IPropertyValue = \
-    EventRegistrationToken = AccessibilitySettings = UISettings = UIColorType = \
-    dom = ToastNotification = ToastNotificationManager = ToastActivatedEventArgs = \
-    ToastDismissedEventArgs = ToastFailedEventArgs = ToastNotifier = \
-    NotificationSetting = NotificationData = Proxy()
+    from winrt.system import Object
 
-ToastDataType = Dict[str, Any]
-ToastResultCallbackType = Optional[Callable[[ToastResult], None]]
-ToastShowCallbackType = Optional[Callable[[Optional[ToastDataType]], None]]
-
-ToastElementListItem = Union[
-    ToastElement, 
-    List[List[Union[Image, Text]]]
-]
-
-ToastElementListItemJSON = Union[
-    Dict[str, Any],
-    List[List[Dict[str, Any]]]
-]
+ToastResultCallbackType = Optional[Callable[[ToastState], Optional[Coroutine]]]
+ToastShowCallbackType = Optional[Callable[[Optional[Dict[str, str]]], Optional[Coroutine]]]
 
 class Toast:
     """
@@ -217,18 +205,19 @@ class Toast:
         "group_id",
         "toast_id",
         "contact_info",
+        "_sentinel",
         "_callback_result",
         "_callback_show",
         "_imp_manager",
         "_imp_toast",
+        "_imp_history",
         "_xml_mute_sound",
-        "_fs"
-    )
-
-    _exclude_copy = (
         "_fs",
-        "_toast_result",
-        "_xml_mute_sound"
+        "_state",
+        "_state_event",
+        "_fut_completed",
+        "_fut_failed",
+        "_fut_dismissed"
     )
 
     def __init__(
@@ -241,8 +230,8 @@ class Toast:
         toast_id : Optional[str] = None,
         show_popup : bool = True,
         base_path : Optional[str] = None,
-        sound : Optional[str] = ToastSound.DEFAULT,
-        sound_loop : bool = False,
+        sound : Union[None, str, ToastSound] = ToastSound.DEFAULT,
+        sound_loop : Optional[bool] = None,
         remote_media : bool = True,
         add_query_params : bool = False,
         expiration_time : Optional[datetime] = None,
@@ -250,7 +239,7 @@ class Toast:
         contact_info : Optional[str] = None
     ) -> None:
         super().__init__()
-        self.elements : List[ToastElementListItem] = []
+        self.elements : List[Union[ToastElement, List[List[Union[Image, Text]]]]] = list()
         self.duration = duration
         self.arguments = arguments
         self.scenario = scenario
@@ -266,15 +255,22 @@ class Toast:
         self.toast_id = toast_id
         self.app_id = app_id
         self.contact_info = contact_info
+        self._sentinel : Optional[str] = None
         self._callback_result : ToastResultCallbackType = None
         self._callback_show : ToastShowCallbackType = None
-        self._imp_manager : "ToastNotifier" = None
-        self._imp_toast : "ToastNotification" = None
+        self._imp_manager : Optional["ToastNotifier"] = None
+        self._imp_toast : Optional["ToastNotification"] = None
+        self._imp_history : Optional["ToastNotificationHistory"] = None
         self._xml_mute_sound : bool = False
         self._fs : Optional[ToastMediaFileSystem] = None
+        self._state : Optional[ToastState] = None
+        self._state_event : Optional[asyncio.Event] = None
+        self._fut_completed : Optional[asyncio.Future[_ToastContextState]] = None
+        self._fut_dismissed : Optional[asyncio.Future[_ToastContextState]] = None
+        self._fut_failed : Optional[asyncio.Future[_ToastContextState]] = None
 
 
-    def on_result(self, function : ToastResultCallbackType = None):
+    def on_state(self, function : ToastResultCallbackType = None):
         """
         A decorator that calls the function when user has clicked or dismissed 
         the toast. An instance of ToastResult will be passed to the handler.
@@ -309,8 +305,7 @@ class Toast:
         Create XML representing the toast.
         """
         root = ET.Element("toast")
-        if self.arguments:
-            root.attrib["launch"] = self.arguments
+        root.attrib["launch"] = self.arguments or ""
         if self.duration:
             root.attrib["duration"] = self.duration.value
         if self.scenario:
@@ -360,9 +355,9 @@ class Toast:
                             assert self.contact_info, "My People notifications require a contact info to be set with Toast.contact_info, otherwise remove the sprite from the image."
                             is_spritesheet = True
                         el.attrib[arg] = self._resolve_uri(el.attrib[arg], allow_fs, query_params)
-                if item._etype == ToastElementType.ACTION:
+                if item._etype == _ToastElementType.ACTION:
                     actions.append(el)
-                elif item._etype == ToastElementType.HEADER:
+                elif item._etype == _ToastElementType.HEADER:
                     root.append(el)
                 elif is_spritesheet:
                     binding_exp.append(el)
@@ -387,18 +382,26 @@ class Toast:
         if len(actions) > 5:
             raise ValueError("A Toast notification can only have up to 5 actions.")
 
-        # Notification sound
+        # Windows doesn't allow providing custom audio from the file system, so we
+        # silent the audio unless if it is a builtin audio name.
         audio = ET.Element("audio")
-        if self.sound:
-            audio.attrib["src"] = self._resolve_uri(self.sound, allow_fs, query_params)
+        custom_audio_path = None
 
-        # If custom sound has provided, mute the original toast 
-        # sound to None since we use our own sound solution.
-        if self._xml_mute_sound or self.uses_custom_sound:
+        if self.sound is not None:
+            audio_src = str(self.sound)
+            resolved_audio = self._resolve_uri(audio_src, allow_fs, query_params)
+            audio.attrib["src"] = resolved_audio
+            if not resolved_audio.startswith("ms-winsoundevent:"):
+                custom_audio_path = resolved_audio
+
+        if self._xml_mute_sound or custom_audio_path:
             audio.attrib["silent"] = "true"
-        audio.attrib["loop"] = "true" if self.sound_loop else "false"
+
+        if self.sound_loop is not None:
+            audio.attrib["loop"] = "true" if self.sound_loop else "false"
+        
         root.append(audio)
-        return root
+        return root, custom_audio_path
 
 
     def _resolve_uri(self, uri: str, allow_fs: bool, query_params: Optional[Dict[str, str]]):
@@ -427,7 +430,8 @@ class Toast:
         self,
         download_media: bool = False
     ) -> str:
-        return ET.tostring(self._to_xml(download_media), encoding = "unicode")
+        xml, _audio = self._to_xml(download_media)
+        return ET.tostring(xml, encoding = "unicode")
 
 
     @staticmethod
@@ -541,35 +545,14 @@ class Toast:
         Otherwise, False.
         """
         try:
-            return \
-                ToastNotificationManager.create_toast_notifier(app_id).setting \
-                == NotificationSetting.ENABLED
+            setting = ToastNotificationSetting(ToastNotificationManager.create_toast_notifier(app_id).setting.value)
+            return setting == ToastNotificationSetting.ENABLED
         except OSError as e:
             if e.winerror == -2147023728:
                 # App ID is not registered in the registry. See register_app_id().
                 # TODO: maybe return a value other than False?
                 return False
             raise e
-
-
-    @property
-    def uses_custom_sound(self) -> bool:
-        """
-        Returns True if the toast uses a file or a URL as a toast sound.
-        """
-        if self.sound and not self.sound.startswith("ms-winsoundevent:"):
-            return True
-        return False
-
-    @property
-    def uses_windows_sound(self) -> bool:
-        """
-        Returns True if the toast uses sound that comes with the Windows.
-        """
-        if self.sound and self.sound.startswith("ms-winsoundevent:"):
-            return True
-        return False
-
 
     @property
     def app_id(self) -> str: 
@@ -646,24 +629,30 @@ class Toast:
             theme = "dark" if (color.g + color.r + color.b) == 0 else "light"
         )
 
+    
+    @property
+    def state(self):
+        return self._state
 
-    def hide(self) -> None:
+
+    def hide(self):
         """
-        Dismisses this toast and stops the custom sound if currently playing. 
+        Dismisses the currently showing toast and stops the custom sound if currently playing.
+
+        It will return an awaitable task that gets finished when notification gets dismissed.
+        While it is also possible to call this method without an `await`, it is not guarnateed
+        that the `Toast.state` will be updated right after this method unless you invoke this
+        method with `await`.
+
+        If there isn't a toast shown before, await result will be None. Otherwise, it will be
+        the `Toast.state` that reflects the current state of the now hidden toast.
         """
-        # If any of these properties are not set, 
-        # then we are sure that toast never displayed before.
-        if (not self._imp_toast) or (not self._imp_manager):
-            return
-        if self._fs:
-            self._fs.close()
-        winsound.PlaySound(None, 4)
-        self._imp_manager.hide(self._imp_toast)
+        return self._hide_toast()
 
 
     def update(
         self,
-        data : ToastDataType,
+        data: Dict[str, str],
         missing_ok : bool = False
     ) -> bool:
         """
@@ -678,41 +667,35 @@ class Toast:
                 showing the toast.
             missing_ok:
                 If True, no exceptions will be raised when notification was not found 
-                (e.g. user has deleted the notification). Defaults to False.
+                (e.g. user has deleted the notification) and will return False instead.
         """
-        notifdata = self._build_notification_data(data)
-        update_result = None
-        if self.toast_id is None:
-            raise ValueError(
-                "Toast must have an ID to use update() function."
-            )
-        if self.group_id:
-            update_result = self._imp_manager.update(
-                notifdata, self.toast_id, self.group_id
-            ).value
-        else:
-            update_result = self._imp_manager.update(notifdata, self.toast_id).value
-        if update_result != 0:
-            if not missing_ok:
-                raise Exception(
-                    "Failed to update the notification; " + (
-                        "notification has not found." if update_result == 2 else
-                        f"unknown error code: {update_result}"
-                    )
-                )
-        return update_result == 0
+        result = self._update_toast(data)
+        if result == ToastUpdateResult.NOTIFICATION_NOT_FOUND:
+            if missing_ok:
+                return False
+            raise Exception("Toast no longer exists.")
+        return result == ToastUpdateResult.SUCCEEDED
 
 
-    async def show(
+    def show(
         self,
-        data : Optional[ToastDataType] = None,
+        data: Optional[Dict[str, str]] = None,
         mute_sound : bool = False
-    ) -> Optional[ToastResult]:
+    ):
         """
-        Shows the notification. If there is any {binding} key, you can give a "data" 
-        dictionary to replace binding keys with their values. You can also 
-        "mute_sound" to mute notification sound regardless of "sound" attribute 
-        of this toast. 
+        Shows the notification.
+
+        It will return an awaitable task that gets finished when the state of the toast
+        notification has changed, If you don't want to wait for a state change, you can also
+        call this method without await at all.
+        
+        The current state of toast is always available in `Toast.state` regardless of
+        the returned task. Toasts send at least 2 state changes, therefore `await`ing will
+        not guarantee the latest state.
+        
+        If there is any templating key set, you can give a "data" dictionary to replace
+        binding keys with their values. You can also "mute_sound" to mute notification
+        sound regardless of "sound" attribute of this toast. 
 
         Parameters:
             data:
@@ -724,175 +707,324 @@ class Toast:
                 notification sounds without needing to change Toast.sound attribute for
                 each time.
         """
-        event_loop, futures, tokens = self._set_toast_manager(mute_sound, data)
+        return self._show_toast(data, mute_sound)
+
+
+    async def wait(self):
+        """
+        Waits until notification gets completely removed and is no longer usable.
+        (e.g. cleared from Action Center, clicked or removed with `hide()`)
+        """
+        if (not self._state_event) or (self._state is None):
+            raise Exception(
+                "Toast needs to be shown first to be waited."
+            )
+        while not self._state.removed:
+            await self._state_event.wait()
+        return self._state
+
+    
+    def _show_toast(
+        self,
+        data : Optional[Dict[str, str]],
+        mute_sound : bool
+    ):
+        loop = asyncio.get_running_loop()
+        custom_audio = self._init_toast(loop, mute_sound, data)
+
+        assert self._imp_manager and self._imp_toast, "Not initialized"
+        assert self._state_event and (self._state is not None), "Invalid state"
         self._imp_manager.show(self._imp_toast)
-        # If sound is custom, play with winsound.
-        if self.uses_custom_sound:
-            if mute_sound:
-                winsound.PlaySound(None, 4)
-            else:
-                winsound.PlaySound(
-                    str(Path(str(self.sound)).resolve()),
-                    winsound.SND_FILENAME + winsound.SND_NODEFAULT + \
-                    winsound.SND_ASYNC + \
-                    (winsound.SND_LOOP if self.sound_loop else 0)
-                )
-        # Execute show handler.
+
+        self._play_sound(custom_audio, self.sound_loop or False)
+
         if self._callback_show:
-            if inspect.iscoroutinefunction(self._callback_show):
-                await self._callback_show(data)
+            if iscoroutinefunction(self._callback_show):
+                loop.call_soon_threadsafe(loop.create_task, self._callback_show(data))
             else:
-                event_loop.call_soon_threadsafe(
-                    self._callback_show, data
-                )
-        try:
-            done, pending = await asyncio.wait(
-                futures, return_when = asyncio.FIRST_COMPLETED
-            )
-            for p in pending:
-                p.cancel()
-            for d in done:
-                return d.result()
-        except asyncio.CancelledError:
-            self.hide()
-        finally:
-            for i, t in enumerate(tokens):
-                if i == 0:
-                    self._imp_toast.remove_activated(t)
-                elif i == 1:
-                    self._imp_toast.remove_dismissed(t)
-                elif i == 2:
-                    self._imp_toast.remove_failed(t)
-            
+                loop.call_soon_threadsafe(loop.create_task, asyncio.to_thread(self._callback_show, data))
 
-    # --------------------
-    # Private
-    # --------------------
+        async def wait_for_state_update(
+            loop : asyncio.AbstractEventLoop,
+            event: asyncio.Event, state: ToastState, listener: ToastResultCallbackType
+        ):
+            await event.wait()
+            if listener:
+                if iscoroutinefunction(listener):
+                    loop.call_soon_threadsafe(loop.create_task, listener(state))
+                else:
+                    loop.call_soon_threadsafe(loop.create_task, asyncio.to_thread(listener, state))
+            return state
 
-    def _create_future_toast_event(
-        self,
-        loop : asyncio.AbstractEventLoop, 
-        method_name : str, 
-        hook_name : str
-    ) -> Tuple[asyncio.Future, "EventRegistrationToken"]:
-        future = loop.create_future()
-        token : EventRegistrationToken = getattr(self._imp_toast, hook_name)(
-            lambda sender, event_args: \
-            loop.call_soon_threadsafe(
-                future.set_result, getattr(self, method_name)(sender, event_args)
-            )
+        return loop.create_task(
+            wait_for_state_update(loop, self._state_event, self._state, self._callback_result)
         )
-        return future, token,
 
 
-    def _set_toast_manager(
+    def _hide_toast(self):
+        loop = asyncio.get_running_loop()
+
+        # If any of these properties are not set, then assume that toast never displayed before.
+        if (not self._imp_toast) or (not self._imp_manager):
+            return loop.create_task(asyncio.sleep(0, None))
+        
+        if self._fs:
+            self._fs.close()
+        self._play_sound(None)
+
+        assert self._state_event and (self._state is not None), "Invalid state"
+        self._imp_manager.hide(self._imp_toast)
+
+        async def wait_for_state_update(
+            loop : asyncio.AbstractEventLoop, 
+            event: asyncio.Event, state: ToastState, listener: ToastResultCallbackType
+        ):
+            # Toast may be already removed before hide() method.
+            while not state._cleared:
+                await event.wait()
+            return state
+
+        return loop.create_task(
+            wait_for_state_update(loop, self._state_event, self._state, self._callback_result)
+        )
+
+
+    def _update_toast(
         self,
-        mute_sound : bool = False,
-        data : Optional[ToastDataType] = None
-    ) -> Tuple[
-        asyncio.AbstractEventLoop, 
-        Set[asyncio.Future], 
-        List["EventRegistrationToken"]
-    ]:
-        self._imp_manager = ToastNotificationManager.create_toast_notifier(self.app_id)
-        event_loop = asyncio.get_running_loop()
-        self._xml_mute_sound = mute_sound
-        xml = dom.XmlDocument()
-        xml.load_xml(self._to_xml(True))
-        self._imp_toast = ToastNotification(xml)
-        if data:
-            self._imp_toast.data = self._build_notification_data(data)
+        binding_data: Dict[str, str]
+    ):
+        assert self._imp_toast and self._imp_manager, "Not initialized"
+
+        notif_data = NotificationData()
+        for k, v in binding_data.items():
+            notif_data.values[k] = str(v)
+        self._imp_toast.data = notif_data
+
+        update_result = None
+        if self.toast_id is None:
+            raise ValueError(
+                "Toast must have an ID to use update() function."
+            )
         if self.group_id:
-            # TODO: Toast groups doesn't seem to supported on Windows 11.
+            update_result = self._imp_manager.update(notif_data, self.toast_id, self.group_id)
+        else:
+            update_result = self._imp_manager.update(notif_data, self.toast_id)
+        return ToastUpdateResult(update_result.value)
+
+
+    def _init_toast(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        mute_sound: bool = False,
+        binding_data: Optional[Dict[str, str]] = None,
+    ):
+        self._imp_manager = ToastNotificationManager.create_toast_notifier(self.app_id)
+        self._xml_mute_sound = mute_sound
+        xml, audio = self._to_xml(True)
+        winxml = dom.XmlDocument()
+        winxml.load_xml(ET.tostring(xml, encoding = "unicode"))
+        self._imp_toast = ToastNotification(winxml)
+
+        assert self._imp_toast and self._imp_manager, "Not initialized"
+
+        notif_data = NotificationData()
+        if binding_data:
+            for k, v in binding_data.items():
+                notif_data.values[k] = str(v)
+
+        # Create an temporary ID to track if it is the same toast with the one that returned when getting all toasts.
+        self._sentinel = str(uuid4())
+        notif_data.values["__sentinel__"] = self._sentinel
+        self._imp_toast.data = notif_data
+
+        if self.group_id:
+            # Toast groups doesn't seem to supported on Windows 11.
             if get_windows_build() >= 22000:
                 self._imp_toast.group = self.group_id
+
         if self.toast_id:
             self._imp_toast.tag = self.toast_id
+
         self._imp_toast.suppress_popup = not self.show_popup
         self._imp_toast.expiration_time = self.expiration_time
-        # Create handlers.
-        futures = set()
-        tokens: List[EventRegistrationToken] = []
-        for k, v in (
-            ("add_activated", "_handle_toast_activated"),
-            ("add_dismissed", "_handle_toast_dismissed"),
-            ("add_failed", "_handle_toast_failed")
-        ):
-            fut, token_obj = self._create_future_toast_event(
-                loop = event_loop, method_name = v, hook_name = k
+
+        self._imp_history = ToastNotificationManager.get_default().history
+
+        # Fullfill Future objects when Windows API event handlers gets invoked.
+
+        self._state = ToastState()
+        self._state_event = asyncio.Event()
+
+        self._fut_completed = loop.create_future()
+        self._fut_dismissed = loop.create_future()
+        self._fut_failed = loop.create_future()
+
+        tok_activated = None
+        tok_dismissed = None
+        tok_failed = None
+
+        # Each event has their own future, since more than one event can be invoked.
+        # Activated is when interacted with the toast (and the toast gets deleted), and failed is when a toast
+        # couldn't be shown. Then there is a dismissed event, which works ...interestingly.
+
+        def _activated_handler(_event_target: "ToastNotification", _event_args: "Object"):
+            def _safe():
+                assert (self._fut_dismissed and self._fut_completed) and self._fut_failed, "Invalid state"
+                if self._fut_completed.cancelled():
+                    return
+
+                # Called event args is not a ToastActivatedEventArgs object but a plain Object, so we cast to it.
+                result = ToastActivatedEventArgs._from(_event_args)
+                inputs = {}
+                data_values = dict() if not _event_target.data else dict(_event_target.data.values.items())
+                if result.user_input:
+                    for x, y in result.user_input.items():
+                        inputs[x] = IPropertyValue._from(y).get_string()
+
+                self._fut_completed.set_result(_ToastContextState(
+                    arguments = result.arguments,
+                    params = data_values,
+                    inputs = inputs,
+                    reason = None,
+                    code = None,
+                    # Clicking a toast makes it removed.
+                    cleared = True
+                ))
+            loop.call_soon_threadsafe(_safe)
+
+        # When a toast first shown and user clicks to "X" button, the toast will still exist since it will be
+        # moved to Action Center. And interestingly, when you clear the toast from there, it will invoke another
+        # dismiss event, and there is no way to know if it is actually cleared from Action Center, or just
+        # moved to there. So we rely on 2 futures for this one.
+
+        def _dismissed_handler(_event_target: "ToastNotification", _event_args: "ToastDismissedEventArgs"):
+            def _safe():
+                assert self._imp_toast and self._imp_history, "Not initialized"
+                assert (self._fut_dismissed and self._fut_completed) and self._fut_failed, "Invalid state"
+                if self._fut_dismissed.cancelled():
+                    return
+
+                dismiss_reason = ToastDismissReason(_event_args.reason.value)
+                data_values = dict() if not _event_target.data else dict(_event_target.data.values.items())
+
+                # If a notification gets dismissed second time, this should mean it is completely removed
+                # (from Action Center), if it is not, then we are in probably an invalid state.
+                if self._fut_dismissed.done():
+                    if self._fut_completed.cancelled():
+                        return
+                    self._fut_failed.cancel()
+                    assert tok_dismissed and tok_activated and tok_failed, "Invalid state"
+                    self._imp_toast.remove_dismissed(tok_dismissed)
+                    self._imp_toast.remove_dismissed(tok_activated)
+                    self._imp_toast.remove_dismissed(tok_failed)
+                    self._fut_completed.set_result(_ToastContextState(
+                        arguments = None,
+                        reason = dismiss_reason,
+                        params = data_values,
+                        inputs = dict(),
+                        code = None,
+                        cleared = True
+                    ))
+                    return
+
+                # If notification was explictly hidden with hide() method, then assume it is removed already.
+                if dismiss_reason == ToastDismissReason.APPLICATION_HIDDEN:
+                    assert tok_dismissed, "Invalid state"
+                    self._imp_toast.remove_dismissed(tok_dismissed)
+
+                self._fut_dismissed.set_result(_ToastContextState(
+                    arguments = None,
+                    reason = dismiss_reason,
+                    params = data_values,
+                    inputs = dict(),
+                    code = None,
+                    cleared = False
+                ))
+            loop.call_soon_threadsafe(_safe)
+
+        def _failed_handler(_event_target: "ToastNotification", _event_args: "ToastFailedEventArgs"):
+            def _safe():
+                assert self._imp_toast and self._imp_history, "Not initialized"
+                assert (self._fut_dismissed and self._fut_completed) and self._fut_failed, "Invalid state"
+                if self._fut_failed.cancelled():
+                    return
+
+                self._fut_completed.cancel()
+                self._fut_dismissed.cancel()
+                assert tok_dismissed and tok_activated and tok_failed, "Invalid state"
+                self._imp_toast.remove_dismissed(tok_dismissed)
+                self._imp_toast.remove_dismissed(tok_activated)
+                self._imp_toast.remove_dismissed(tok_failed)
+
+                error_code = _event_args.error_code.value
+                self._fut_failed.set_result(_ToastContextState(
+                    arguments = None,
+                    params = dict(),
+                    inputs = dict(),
+                    reason = None,
+                    code = error_code,
+                    cleared = True
+                ))
+            loop.call_soon_threadsafe(_safe)
+
+        tok_activated = self._imp_toast.add_activated(_activated_handler)
+        tok_dismissed = self._imp_toast.add_dismissed(_dismissed_handler)
+        tok_failed = self._imp_toast.add_failed(_failed_handler)
+
+        def _set_toast_state_handler(future: asyncio.Future[_ToastContextState]):
+            if future.cancelled():
+                return
+            state_data = cast(_ToastContextState, future.result())
+            assert self._imp_history and self._imp_toast, "Not initialized"
+            assert (self._state is not None) and self._state_event, "Invalid state"
+            self._state._provided = True
+            self._state._dismiss_reason = state_data.reason
+            self._state._arguments = state_data.arguments
+            self._state._params = state_data.params
+            self._state._inputs = state_data.inputs
+            self._state._cleared = True
+            for toast in self._imp_history.get_history(self.app_id):
+                if not toast.data:
+                    continue
+                if toast.data.values.get("__sentinel__") == self._sentinel:
+                    self._state._cleared = state_data.cleared
+                    break            
+            if state_data.code:
+                raise Exception(
+                    f"Toast failed with error code: {state_data.code}"
+                )
+            if self._state._cleared:
+                if self._fs:
+                    self._fs.close()
+            self._state_event.set()
+            self._state_event.clear()
+
+        self._fut_completed.add_done_callback(_set_toast_state_handler)
+        self._fut_dismissed.add_done_callback(_set_toast_state_handler)
+        self._fut_failed.add_done_callback(_set_toast_state_handler)
+
+        return audio
+
+
+    def _play_sound(self, sound_path: Optional[str], sound_loop: bool = False):
+        if sound_path:
+            winsound.PlaySound(
+                str(Path(sound_path).resolve()),
+                winsound.SND_FILENAME + \
+                winsound.SND_NODEFAULT + \
+                winsound.SND_ASYNC + \
+                (winsound.SND_LOOP if sound_loop else 0)
             )
-            futures.add(fut)
-            tokens.append(token_obj)
-        return event_loop, futures, tokens,
+        else:
+            winsound.PlaySound(None, winsound.SND_MEMORY)
 
-
-    def _handle_toast_activated(
-        self, 
-        toast : "ToastNotification", 
-        args : "Object"
-    ):
-        if self._fs:
-            self._fs.close()
-        eventargs = ToastActivatedEventArgs._from(args)
-        inputs = {}
-        if eventargs.user_input:
-            for x, y in eventargs.user_input.items():
-                inputs[x] = IPropertyValue._from(y).get_string()
-        result = ToastResult(
-            arguments = eventargs.arguments,
-            inputs = inputs,
-            show_data = {} if not toast.data else dict(toast.data.values.items()),
-            dismiss_reason = ToastDismissReason.NOT_DISMISSED
-        )
-        if self._callback_result:
-            self._callback_result(result)
-        return result
-
-
-    def _handle_toast_dismissed(
-        self, 
-        toast : "ToastNotification", 
-        args : "ToastDismissedEventArgs"
-    ):
-        if self._fs:
-            self._fs.close()
-        winsound.PlaySound(None, 4)
-        result = ToastResult(
-            arguments = "", 
-            inputs = {},
-            show_data = {} if not toast.data else dict(toast.data.values.items()), 
-            dismiss_reason = ToastDismissReason(args.reason.value)
-        )
-        if self._callback_result:
-            self._callback_result(result)
-        return result
-
-
-    def _handle_toast_failed(
-        self, 
-        toast : "ToastNotification",
-        args : "ToastFailedEventArgs"
-    ):
-        if self._fs:
-            self._fs.close()
-        winsound.PlaySound(None, 4)
-        raise RuntimeError(
-            "Toast failed with error code: " + args.error_code.value
-        )
-
-
-    @staticmethod
-    def _build_notification_data(
-        data : dict
-    ) -> "NotificationData":
-        x = NotificationData()
-        for k, v in data.items():
-            x.values[str(k)] = str(v)
-        return x
 
     @staticmethod
     def elements_from_json(
-        elements : List[ToastElementListItemJSON]
+        elements : List[Union[
+            Dict[str, Any],
+            List[List[Dict[str, Any]]]
+        ]]
     ):
         for i in elements:
             if isinstance(i, list):
@@ -957,14 +1089,35 @@ class Toast:
         )
 
     def __del__(self):
-        if hasattr(self, "_fs"):
-            if self._fs:
-                self._fs.close()
+        if self._fs:
+            self._fs.close()
+        if self._fut_completed and not self._fut_completed.done():
+            self._fut_completed.cancel()
+        if self._fut_dismissed and not self._fut_dismissed.done():
+            self._fut_dismissed.cancel()
+        if self._fut_failed and not self._fut_failed.done():
+            self._fut_failed.cancel()
+        if self._state_event:
+            self._state_event.set()
+        
 
     def __copy__(self) -> "Toast":
-        x = Toast()
-        for i in self.__slots__:
-            if i in self._exclude_copy:
-                continue
-            setattr(x, i, getattr(self, i))
-        return x
+        toast = Toast(
+            arguments = self.arguments,
+            duration = self.duration,
+            timestamp = self.timestamp,
+            scenario = self.scenario,
+            group_id = self.group_id,
+            toast_id = self.toast_id,
+            show_popup = self.show_popup,
+            base_path = self.base_path,
+            sound = self.sound,
+            sound_loop = self.sound_loop,
+            remote_media = self.remote_media,
+            add_query_params = self.add_query_params,
+            expiration_time = self.expiration_time,
+            app_id = self.app_id,
+            contact_info = self.contact_info
+        )
+        toast.elements.extend(self.elements)
+        return toast

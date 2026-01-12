@@ -21,17 +21,17 @@
 # SOFTWARE.
 
 __all__ = [
-    "resolve_uri",
-    "ToastResult"
+    "resolve_uri"
 ]
 
-from toasted.enums import ToastElementType, ToastDismissReason, ToastXMLTag
+from toasted.enums import _ToastElementType, ToastDismissReason, _ToastXMLTag
 
 from abc import ABC, abstractmethod
 from typing import (
     Dict,
     NamedTuple,
     Any,
+    Optional,
     Sequence,
     Set, 
     Tuple, 
@@ -202,7 +202,7 @@ def resolve_uri(
     # Extract icons from Windows icon.
     elif split.scheme == "icon":
         values = dict(parse_qsl(split.query))
-        hex_value = split.path.removeprefix("/").removeprefix("U+").removeprefix("0x")
+        hex_value = (split.netloc or split.path).removeprefix("/").removeprefix("U+").removeprefix("0x")
         hex_digits = set(string.hexdigits)
 
         if not all(c in hex_digits for c in hex_value):
@@ -399,40 +399,66 @@ class ToastBase(ABC):
         return cls(**data)
 
 
-class ToastResult:
-    def __init__(
-        self,
-        arguments : str,
-        inputs : dict,
-        show_data : dict,
-        dismiss_reason : ToastDismissReason
-    ) -> None:
-        self.arguments = arguments
-        self.inputs = inputs
-        self.show_data = show_data
-        self.dismiss_reason = dismiss_reason
+class ToastState:
+    def __init__(self) -> None:
+        self._provided : bool = False
+        self._arguments : Optional[str] = None
+        self._inputs : Optional[dict] = None
+        self._params : Optional[dict] = None
+        self._dismiss_reason : Optional[ToastDismissReason] = None
+        self._cleared : bool = False
 
     @property
-    def is_dismissed(self):
-        return self.dismiss_reason != ToastDismissReason.NOT_DISMISSED
+    def arguments(self):
+        return self._arguments
+
+    @property
+    def user_input(self):
+        return self._inputs or dict()
+
+    @property
+    def template_data(self):
+        return self._params or dict()
+
+    @property
+    def reason(self):
+        return self._dismiss_reason
+
+    @property
+    def removed(self):
+        if self._arguments is not None:
+            return True
+        return self._cleared
 
     def __bool__(self):
-        return self.is_dismissed
+        return self.removed
 
     def __repr__(self) -> str:
-        return (
-            f'<{self.__class__.__name__} arguments="{self.arguments}" '
-            f'inputs="{self.inputs}" reason={self.dismiss_reason}>'
+        return "<{0} arguments={1} inputs={2} params={3} reason={4} removed={5}>".format(
+            self.__class__.__name__,
+            None if self._arguments is None else f'"{self._arguments}"',
+            self._inputs,
+            self._params,
+            None if self._dismiss_reason is None else self._dismiss_reason.name,
+            self.removed
         )
+
+class _ToastContextState(NamedTuple):
+    arguments: Optional[str]
+    params: Dict[str, str]
+    inputs: Dict[str, str]
+    reason: Optional[ToastDismissReason]
+    code: Optional[int]
+    cleared: bool
 
 
 class ToastElement(ToastBase):
     _registry : Set[Type["ToastElement"]] = set()
-    _etype : ToastElementType
+    _etype : _ToastElementType
     _euri : Sequence[str]
-    _ename : ToastXMLTag
+    _ename : _ToastXMLTag
 
-    def __init_subclass__(cls, tag : ToastXMLTag, slot : ToastElementType, uri_keys : Sequence[str] = (), **kwargs) -> None:
+    def __init_subclass__(cls, tag : _ToastXMLTag, slot : _ToastElementType, uri_keys : Sequence[str] = (), **kwargs) -> None:
         super().__init_subclass__(**kwargs)
         cls._etype = slot
         cls._euri = uri_keys
