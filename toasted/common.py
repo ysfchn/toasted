@@ -25,6 +25,7 @@ __all__ = [
 ]
 
 import asyncio
+from datetime import datetime
 from enum import Enum
 import winreg
 from inspect import isawaitable, iscoroutinefunction
@@ -55,12 +56,19 @@ from xml.etree import ElementTree as ET
 from PIL import Image, ImageFont, ImageDraw
 
 
+class ToastPartial(NamedTuple):
+    expiration_time: Optional[datetime]
+    group_id: Optional[str]
+    toast_id: Optional[str]
+    params: Dict[str, str]
+
+
 class ToastThemeInfo(NamedTuple):
-    has_high_contrast : bool
-    language_code : str
-    color_dark : Tuple[int, int, int]
-    color_light : Tuple[int, int, int]
-    color_accent : Tuple[int, int, int]
+    has_high_contrast: bool
+    language_code: str
+    color_dark: Tuple[int, int, int]
+    color_light: Tuple[int, int, int]
+    color_accent: Tuple[int, int, int]
 
     @property
     def is_dark(self):
@@ -258,9 +266,8 @@ def resolve_uri(
     # Pick an icon from system.
     elif split.scheme == "icon":
         hex_value = (split.netloc or split.path).removeprefix("/").removeprefix("U+").removeprefix("0x")
-
         return URIResult(
-            value = URIResultIcon.from_value(f"charcode={int(hex_value, 16)}&{split.query}").to_value(),
+            value = URIResultIcon.from_value(f"charcode={int(hex_value, 16)}&{split.query + split.fragment}").to_value(),
             type = URIResultType.ICON
         )
 

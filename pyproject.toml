@@ -16,6 +16,7 @@ dependencies = [
     "winrt-Windows.UI.ViewManagement~=2.2.0 ; sys_platform == 'win32'",
     "winrt-Windows.Foundation~=2.2.0 ; sys_platform == 'win32'",
     "winrt-Windows.UI.Notifications~=2.2.0 ; sys_platform == 'win32'",
+    "winrt-Windows.UI~=2.2.0 ; sys_platform == 'win32'",
     "winrt-Windows.Storage~=2.2.0 ; sys_platform == 'win32'",
     "winrt-Windows.Data.Xml.Dom~=2.2.0 ; sys_platform == 'win32'",
     # Not directly used by Toasted, but appearently it is required for toast

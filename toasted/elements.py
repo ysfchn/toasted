@@ -539,6 +539,8 @@ class Select(ToastElement, slot = _ToastElementType.ACTION, tag = _ToastXMLTag.I
         if self.title:
             el.attrib["title"] = self.title
         if self.default:
+            if self.default not in self.options:
+                raise ValueError("Default selection key must be one of selection choices")
             el.attrib["defaultInput"] = self.default
         for k, v in self.options.items():
             choice = ET.Element("selection")

@@ -27,6 +27,7 @@ from uuid import uuid4
 from httpx import ConnectError, ConnectTimeout
 from toasted.common import (
     ToastElement,
+    ToastPartial,
     ToastState,
     ToastThemeInfo,
     URIResultIcon,
@@ -42,7 +43,6 @@ from toasted.common import (
 )
 from toasted.elements import Button, Image, Text
 from toasted.filesystem import ToastMediaFileSystem
-from toasted.history import HistoryForToast
 from toasted.enums import (
     ToastDuration, 
     ToastScenario, 
@@ -609,8 +609,8 @@ class Toast:
                 or an AUMID in "CompanyName.ProductName.SubProduct.VersionInformation" 
                 format, (last section, "VersionInformation" is optional)
         """
-        if value != Toast._current_app_id:
-            Toast._current_app_id = value or sys.executable
+        if value != self.__class__._current_app_id:
+            self.__class__._current_app_id = value or sys.executable
             # https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-setcurrentprocessexplicitappusermodelid
             # https://stackoverflow.com/a/1552105
             windll.shell32.SetCurrentProcessExplicitAppUserModelID(
@@ -630,13 +630,6 @@ class Toast:
             output.append((k, v.get("DisplayName"), v.get("IconUri"), ))
         return output
 
-    @property
-    def history(self) -> HistoryForToast:
-        """
-        Get History object bound for this toast.
-        """
-        return HistoryForToast(self)
-
 
     @staticmethod
     def get_notification_mode() -> ToastNotificationMode:
@@ -653,17 +646,20 @@ class Toast:
             return ToastNotificationMode.FEATURE_NOT_AVAILABLE
 
 
-    @staticmethod
-    def get_theme_info():
+    @classmethod
+    def get_theme_info(cls):
         """
         Get information about theme and language setting which is currently
         set on Windows.
         """
-        return Toast._get_windows_theme()
+        return cls._get_windows_theme()
 
     
     @property
     def state(self):
+        """
+        Get the current state of toast.
+        """
         return self._state
 
 
@@ -671,15 +667,10 @@ class Toast:
         """
         Dismisses the currently showing toast and stops the custom sound if currently playing.
 
-        It will return an awaitable task that gets finished when notification gets dismissed.
-        While it is also possible to call this method without an `await`, it is not guarnateed
-        that the `Toast.state` will be updated right after this method unless you invoke this
-        method with `await`.
-
-        If there isn't a toast shown before, await result will be None. Otherwise, it will be
-        the `Toast.state` that reflects the current state of the now hidden toast.
+        If there isn't a toast shown before, the return result will be False, otherwise it will
+        return True.
         """
-        return asyncio.create_task(self._hide_toast())
+        return self._hide_toast()
 
 
     def update(
@@ -755,6 +746,53 @@ class Toast:
         await self._state_done.wait()
         return self._state
 
+
+    def remove(self):
+        """
+        Removes the toast. To remove this individual toast, a toast ID must be set, otherwise this will end up
+        clearing all toasts having the same group ID (same as `remove_group()`), if a group ID hasn't also set,
+        every toast sent from currently set app ID will be removed altogether. (same as `remove_all()`)
+        """
+        self._remove_toast(self, self.toast_id, self.group_id, self.app_id)
+
+
+    def remove_group(self):
+        """
+        Removes all toasts sharing the same group ID with this toast. If this toast doesn't have a group ID set,
+        it will act same with `remove_all()`.
+        """
+        self._remove_toast(self, None, self.group_id, self.app_id)
+
+
+    def remove_all(self):
+        """
+        Removes all toasts sent from currently set app ID.
+        """
+        self._remove_toast(self, None, None, self.app_id)
+
+
+    @classmethod
+    def remove_of(cls, toast_id: Optional[str] = None, group_id: Optional[str] = None, app_id: Optional[str] = None):
+        """
+        Removes one toast having given toast ID, or all toasts having same group ID, or all toasts sent from given app ID.
+        """
+        cls._remove_toast(None, toast_id, group_id, app_id)
+
+
+    def list_history(self):
+        """
+        Gets a list of toasts sent from current app ID.
+        """
+        list(self._list_toast(self, self.app_id))
+
+
+    @classmethod
+    def list_history_of(cls, app_id: Optional[str]):
+        """
+        Gets a list of toasts sent from given app ID.
+        """
+        return list(cls._list_toast(None, app_id))
+
     
     async def _show_toast(
         self,
@@ -786,10 +824,10 @@ class Toast:
         return self._state
 
 
-    async def _hide_toast(self):
+    def _hide_toast(self):
         # If any of these properties are not set, then assume that toast never displayed before.
         if (not self._imp_toast) or (not self._imp_manager):
-            return
+            return False
         
         if self._fs:
             self._fs.close()
@@ -797,6 +835,7 @@ class Toast:
 
         assert self._state_queue and (self._state is not None), "Invalid state"
         self._imp_manager.hide(self._imp_toast)
+        return True
 
 
     def _update_toast(
@@ -858,7 +897,7 @@ class Toast:
         self._imp_toast.suppress_popup = not self.show_popup
         self._imp_toast.expiration_time = self.expiration_time
 
-        self._imp_history = ToastNotificationManager.get_default().history
+        self._init_history(self)
 
         # Fullfill Future objects when Windows API event handlers gets invoked.
 
@@ -950,9 +989,8 @@ class Toast:
                 # the toast is really cleared or not, we check for its existence with a random sentinel value added
                 # to the toast.
                 for toast in self._imp_history.get_history(self.app_id):
-                    if toast.data:
-                        if toast.data.values.get("__sentinel__") == self._sentinel:
-                            is_really_cleared = False
+                    if toast.data.values.get("__sentinel__") == self._sentinel:
+                        is_really_cleared = False
 
                 self._fut_dismissed.set_result(_ToastContextState(
                     arguments = None,
@@ -1014,6 +1052,73 @@ class Toast:
         self._fut_failed.add_done_callback(_set_toast_state_handler)
 
         return audio
+
+
+    @staticmethod
+    def _convert_imp_toast(toast: "ToastNotification"):
+        return ToastPartial(
+            expiration_time = toast.expiration_time,
+            group_id = toast.group or None,
+            toast_id = toast.tag or None,
+            params = dict(toast.data.values.items())
+        )
+
+
+    @classmethod
+    def _list_toast(cls, instance: Optional["Toast"], app_id: Optional[str]):
+        history = cls._init_history(instance)
+        if app_id:
+            for item in history.get_history(app_id):
+                yield cls._convert_imp_toast(item)
+            return
+        for item in history.get_history():
+            yield cls._convert_imp_toast(item)
+
+
+    @classmethod
+    def _remove_toast(cls, instance: Optional["Toast"], toast_id: Optional[str], group_id: Optional[str], app_id: Optional[str]):
+        history = cls._init_history(instance)
+        if toast_id and (group_id and app_id):
+            history.remove(toast_id, group_id, app_id)
+        elif toast_id and (group_id and not app_id):
+            history.remove(toast_id, group_id)
+        elif toast_id and (not group_id and not app_id):
+            history.remove(toast_id)
+        elif not toast_id and (group_id and app_id):
+            history.remove_group(group_id, app_id)
+        elif not toast_id and (group_id and not app_id):
+            history.remove_group(group_id)
+        elif app_id:
+            history.clear(app_id)
+        else:
+            history.clear()
+        # Make sure to send a dummy "cleared" event to the toast, since Windows doesn't invoke
+        # the "dismiss" event for toasts that removed programmatically. Otherwise it will stuck
+        # forever if a toast was wait()'ed for.
+        if instance:
+            if (instance._state is None) or (not instance._state_queue):
+                return
+            cleared_signal = _ToastContextState(None, dict(), dict(), None, None, True)
+            if toast_id and (instance.toast_id == toast_id):
+                instance._state._update(cleared_signal)
+            elif (not toast_id and group_id) and (instance.group_id == group_id):
+                instance._state._update(cleared_signal)
+            elif (app_id and (not toast_id and not group_id)) and (instance.app_id == app_id):
+                instance._state._update(cleared_signal)
+            instance._state_queue.put_nowait(instance._state)
+            if instance._fs:
+                instance._fs.close()
+            instance._play_sound(None)
+
+
+    @classmethod
+    def _init_history(cls, instance: Optional["Toast"]):
+        # Re-use existing history from toast or create a new one
+        if instance:
+            if not instance._imp_history:
+                instance._imp_history = ToastNotificationManager.get_default().history
+            return instance._imp_history
+        return ToastNotificationManager.get_default().history
 
 
     def _play_sound(self, sound_path: Optional[str], sound_loop: bool = False):
