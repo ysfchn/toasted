@@ -493,6 +493,14 @@ class ToastState:
         self._dismiss_reason : Optional[ToastDismissReason] = None
         self._cleared : bool = False
 
+    def _update(self, context: "_ToastContextState"):
+        self._provided = True
+        self._dismiss_reason = context.reason
+        self._arguments = context.arguments
+        self._params = context.params
+        self._inputs = context.inputs
+        self._cleared = context.cleared
+
     @property
     def arguments(self):
         return self._arguments
@@ -523,7 +531,7 @@ class ToastState:
             self.__class__.__name__,
             None if self._arguments is None else f'"{self._arguments}"',
             self._inputs,
-            self._params,
+            "{}" if not self._params else dict(((k, v) for k, v in self._params.items() if k != "__sentinel__")),
             None if self._dismiss_reason is None else self._dismiss_reason.name,
             self.removed
         )

@@ -943,13 +943,24 @@ class Toast:
                     assert tok_dismissed, "Invalid state"
                     self._imp_toast.remove_dismissed(tok_dismissed)
 
+                is_really_cleared = True
+
+                # It is also possible to have dismiss event invoked only once (when we expect to have twice)
+                # if the user cleared the notification while Action Center is already open, therefore, to ensure
+                # the toast is really cleared or not, we check for its existence with a random sentinel value added
+                # to the toast.
+                for toast in self._imp_history.get_history(self.app_id):
+                    if toast.data:
+                        if toast.data.values.get("__sentinel__") == self._sentinel:
+                            is_really_cleared = False
+
                 self._fut_dismissed.set_result(_ToastContextState(
                     arguments = None,
                     reason = dismiss_reason,
                     params = data_values,
                     inputs = dict(),
                     code = None,
-                    cleared = False
+                    cleared = is_really_cleared
                 ))
             loop.call_soon_threadsafe(_safe)
 
@@ -988,18 +999,7 @@ class Toast:
             state_data = cast(_ToastContextState, future.result())
             assert self._imp_history and self._imp_toast, "Not initialized"
             assert (self._state is not None) and self._state_queue, "Invalid state"
-            self._state._provided = True
-            self._state._dismiss_reason = state_data.reason
-            self._state._arguments = state_data.arguments
-            self._state._params = state_data.params
-            self._state._inputs = state_data.inputs
-            self._state._cleared = True
-            for toast in self._imp_history.get_history(self.app_id):
-                if not toast.data:
-                    continue
-                if toast.data.values.get("__sentinel__") == self._sentinel:
-                    self._state._cleared = state_data.cleared
-                    break
+            self._state._update(state_data)
             if state_data.code:
                 raise Exception(
                     f"Toast failed with error code: {state_data.code}"
