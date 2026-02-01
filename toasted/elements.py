@@ -33,7 +33,8 @@ __all__ = [
 from toasted.common import ToastElement
 from toasted.enums import (
     _ToastXMLTag,
-    _ToastElementType, 
+    _ToastElementType,
+    _ToastMediaProps,
     ToastTextAlign, 
     ToastTextStyle, 
     ToastButtonStyle, 
@@ -145,7 +146,7 @@ class Text(ToastElement, slot = _ToastElementType.VISUAL, tag = _ToastXMLTag.TEX
         return el
 
 
-class Image(ToastElement, slot = _ToastElementType.VISUAL, tag = _ToastXMLTag.IMAGE, uri_keys = ("src", "spritesheet-src")):
+class Image(ToastElement, slot = _ToastElementType.VISUAL, tag = _ToastXMLTag.IMAGE):
     """
     Specifies an image used in the toast template.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-image
@@ -239,6 +240,14 @@ class Image(ToastElement, slot = _ToastElementType.VISUAL, tag = _ToastXMLTag.IM
             el.attrib["spritesheet-startingFrame"] = str(self.sprite_index)
         return el
 
+    def _uri_holder(self):
+        if self.source:
+            if True:
+                yield _ToastMediaProps(attribute = "src", icon_size = 128, icon_padding = (480, 180))
+            yield _ToastMediaProps(attribute = "src", icon_size = 192, icon_padding = 192)
+        if self.sprite_source:
+            yield _ToastMediaProps(attribute = "spritesheet-src", icon_size = 192, icon_padding = 32)
+
 
 class Progress(ToastElement, slot = _ToastElementType.VISUAL, tag = _ToastXMLTag.PROGRESS):
     """
@@ -291,7 +300,7 @@ class Progress(ToastElement, slot = _ToastElementType.VISUAL, tag = _ToastXMLTag
         return el
 
 
-class Button(ToastElement, slot = _ToastElementType.ACTION, tag = _ToastXMLTag.ACTION, uri_keys = ("imageUri", )):
+class Button(ToastElement, slot = _ToastElementType.ACTION, tag = _ToastXMLTag.ACTION):
     """
     Specifies a button shown in a toast.
     https://docs.microsoft.com/en-us/uwp/schemas/tiles/toastschema/element-action
@@ -371,6 +380,8 @@ class Button(ToastElement, slot = _ToastElementType.ACTION, tag = _ToastXMLTag.A
         el = ET.Element(self._xmltag())
         el.attrib["content"] = self.content
         el.attrib["arguments"] = self.arguments
+        # There is also undocumented "system" value, which used for "snooze" and "dismiss" buttons as "arguments" value
+        # https://learn.microsoft.com/en-us/dotnet/api/microsoft.toolkit.uwp.notifications.toastactivationtype?view=win-comm-toolkit-dotnet-7.1
         el.attrib["activationType"] = "foreground" if not self.is_protocol else "protocol"
         # Unsupported options:
         # - protocolActivationTargetApplicationPfn
@@ -389,6 +400,12 @@ class Button(ToastElement, slot = _ToastElementType.ACTION, tag = _ToastXMLTag.A
         if self.hint_action_id:
             el.attrib["hint-actionId"] = self.hint_action_id
         return el
+
+    def _uri_holder(self):
+        if self.icon:
+            # Button icons are 16x16 with no padding
+            # https://learn.microsoft.com/en-us/windows/apps/develop/notifications/app-notifications/adaptive-interactive-toasts?tabs=appsdk#buttons-with-icons
+            yield _ToastMediaProps(attribute = "imageUri", icon_size = 16, icon_padding = 0)
 
 
 class Header(ToastElement, slot = _ToastElementType.HEADER, tag = _ToastXMLTag.HEADER):

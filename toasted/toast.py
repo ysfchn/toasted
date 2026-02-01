@@ -23,14 +23,22 @@
 __all__ = ["Toast"]
 
 from uuid import uuid4
+
+from httpx import ConnectError, ConnectTimeout
 from toasted.common import (
     ToastElement,
     ToastState,
     ToastThemeInfo,
+    URIResultIcon,
+    URIResultType,
+    get_icon_font_default,
+    get_icon_from_font,
     get_query_app_ids,
     get_windows_build,
     resolve_uri,
-    _ToastContextState
+    _ToastContextState,
+    rgb_to_hex,
+    wrap_callback
 )
 from toasted.elements import Button, Image, Text
 from toasted.filesystem import ToastMediaFileSystem
@@ -39,7 +47,8 @@ from toasted.enums import (
     ToastDuration, 
     ToastScenario, 
     ToastSound, 
-    _ToastElementType, 
+    _ToastElementType,
+    _ToastMediaProps,
     ToastNotificationMode, 
     ToastDismissReason,
     ToastUpdateResult,
@@ -55,7 +64,6 @@ from typing import (
     List, Union, cast, TYPE_CHECKING
 )
 from pathlib import Path
-from inspect import iscoroutinefunction
 from xml.etree import ElementTree as ET
 
 import winreg
@@ -214,7 +222,8 @@ class Toast:
         "_xml_mute_sound",
         "_fs",
         "_state",
-        "_state_event",
+        "_state_queue",
+        "_state_done",
         "_fut_completed",
         "_fut_failed",
         "_fut_dismissed"
@@ -264,7 +273,8 @@ class Toast:
         self._xml_mute_sound : bool = False
         self._fs : Optional[ToastMediaFileSystem] = None
         self._state : Optional[ToastState] = None
-        self._state_event : Optional[asyncio.Event] = None
+        self._state_queue : Optional[asyncio.Queue] = None
+        self._state_done : Optional[asyncio.Event] = None
         self._fut_completed : Optional[asyncio.Future[_ToastContextState]] = None
         self._fut_dismissed : Optional[asyncio.Future[_ToastContextState]] = None
         self._fut_failed : Optional[asyncio.Future[_ToastContextState]] = None
@@ -323,7 +333,7 @@ class Toast:
         visual.append(binding)
         root.append(visual)
 
-        query_params = None if not self.add_query_params else self.get_theme_info().as_params()
+        theme_info = self.get_theme_info()
 
         # Iterate through elements and add them to the binding element.
         for item in self.elements:
@@ -337,9 +347,8 @@ class Toast:
                         el = child._to_xml()
 
                         # Resolve URIs found in the element.
-                        for arg in child._euri:
-                            if el.attrib.get(arg):
-                                el.attrib[arg] = self._resolve_uri(el.attrib[arg], allow_fs, query_params)
+                        for arg in child._uri_holder():
+                            el.attrib[arg.attribute] = self._resolve_uri(el.attrib[arg.attribute], allow_fs, theme_info, self.add_query_params, arg)
                         sgroup.append(el)
                     group.append(sgroup)
                 binding.append(group)
@@ -349,12 +358,11 @@ class Toast:
                 is_spritesheet = False
 
                 # Resolve URIs found in the element.
-                for arg in item._euri:
-                    if el.attrib.get(arg):
-                        if arg == "spritesheet-src":
-                            assert self.contact_info, "My People notifications require a contact info to be set with Toast.contact_info, otherwise remove the sprite from the image."
-                            is_spritesheet = True
-                        el.attrib[arg] = self._resolve_uri(el.attrib[arg], allow_fs, query_params)
+                for arg in item._uri_holder():
+                    if arg.is_sprite:
+                        assert self.contact_info, "My People notifications require a contact info to be set with Toast.contact_info, otherwise remove the sprite from the image."
+                        is_spritesheet = True
+                    el.attrib[arg.attribute] = self._resolve_uri(el.attrib[arg.attribute], allow_fs, theme_info, self.add_query_params, arg)
                 if item._etype == _ToastElementType.ACTION:
                     actions.append(el)
                 elif item._etype == _ToastElementType.HEADER:
@@ -389,7 +397,7 @@ class Toast:
 
         if self.sound is not None:
             audio_src = str(self.sound)
-            resolved_audio = self._resolve_uri(audio_src, allow_fs, query_params)
+            resolved_audio = self._resolve_uri(audio_src, allow_fs, theme_info, self.add_query_params)
             audio.attrib["src"] = resolved_audio
             if not resolved_audio.startswith("ms-winsoundevent:"):
                 custom_audio_path = resolved_audio
@@ -404,23 +412,54 @@ class Toast:
         return root, custom_audio_path
 
 
-    def _resolve_uri(self, uri: str, allow_fs: bool, query_params: Optional[Dict[str, str]]):
-        resolved = resolve_uri(uri)
-        if resolved.type == "hex":
+    def _create_icon(self, icon_data: URIResultIcon, theme_info: ToastThemeInfo, default_props: _ToastMediaProps):
+        font_file = None
+        if (not icon_data.font_file) or (icon_data.font_file == "mdl2" or icon_data.font_file == "fluent"):
+            font_file = get_icon_font_default(icon_data.font_file or None)
+            if font_file:
+                font_file = str(font_file)
+        else:
+            font_file = icon_data.font_file
+        if not font_file:
+            raise ValueError("Couldn't find a suitable icon font, pick another font or remove for using system fonts.")
+        return get_icon_from_font(
+            charcode = icon_data.charcode,
+            font_file = font_file,
+            icon_size = icon_data.size or default_props.icon_size,
+            icon_padding = icon_data.padding or default_props.icon_padding,
+            background = icon_data.background or ("ffffff00" if default_props.icon_padding == 0 else rgb_to_hex(theme_info.color_accent)),
+            foreground = icon_data.foreground or "ffffffff" # rgb_to_hex(theme_info.color_light)
+        )
+
+
+    def _resolve_uri(self, uri: str, allow_fs: bool, theme_info: ToastThemeInfo, add_params_to_remote: bool, icon_props: Optional[_ToastMediaProps] = None):
+        resolved = resolve_uri(uri, theme_info)
+        if resolved.type == URIResultType.INLINE:
             if allow_fs:
                 if not self._fs:
                     self._fs = ToastMediaFileSystem()
                 return self._fs.put(bytes.fromhex(resolved.value))
-        elif resolved.type == "remote":
+        elif resolved.type == URIResultType.ICON:
+            assert icon_props, "Icon property object is required"
+            if allow_fs:
+                if not self._fs:
+                    self._fs = ToastMediaFileSystem()
+                icon_image = self._create_icon(URIResultIcon.from_value(resolved.value), theme_info, icon_props)
+                return self._fs.put(icon_image)
+        elif resolved.type == URIResultType.REMOTE:
             if allow_fs:
                 if not self.remote_media:
                     raise ValueError(f"Downloading from remote URI '{resolved.value}' was disallowed by `Toast.remote_media` property.")
                 if not self._fs:
                     self._fs = ToastMediaFileSystem()
-                return self._fs.get(
-                    url = resolved.value,
-                    query_params = query_params
-                )
+                try:
+                    return self._fs.get(
+                        url = resolved.value,
+                        query_params = theme_info.to_query() if add_params_to_remote else None
+                    )
+                except (ConnectError, ConnectTimeout):
+                    # If can't connect to internet, use a placeholder "no connection" icon.
+                    return self._resolve_uri("icon://U+F384", allow_fs, theme_info, True, icon_props)
         else:
             return resolved.value
         return uri
@@ -615,19 +654,12 @@ class Toast:
 
 
     @staticmethod
-    def get_theme_info() -> ToastThemeInfo:
+    def get_theme_info():
         """
         Get information about theme and language setting which is currently
         set on Windows.
         """
-        color = UISettings().get_color_value(UIColorType.BACKGROUND)
-        lang = locale.windows_locale[windll.kernel32.GetUserDefaultUILanguage()]
-        high_contrast = AccessibilitySettings().high_contrast
-        return ToastThemeInfo(
-            contrast = "high" if high_contrast else "standard",
-            lang = lang.lower().replace("_", "-"),
-            theme = "dark" if (color.g + color.r + color.b) == 0 else "light"
-        )
+        return Toast._get_windows_theme()
 
     
     @property
@@ -647,12 +679,12 @@ class Toast:
         If there isn't a toast shown before, await result will be None. Otherwise, it will be
         the `Toast.state` that reflects the current state of the now hidden toast.
         """
-        return self._hide_toast()
+        return asyncio.create_task(self._hide_toast())
 
 
     def update(
         self,
-        data: Dict[str, str],
+        data: Dict[str, Any],
         missing_ok : bool = False
     ) -> bool:
         """
@@ -679,35 +711,36 @@ class Toast:
 
     def show(
         self,
-        data: Optional[Dict[str, str]] = None,
+        data: Optional[Dict[str, Any]] = None,
         mute_sound : bool = False
     ):
         """
         Shows the notification.
 
-        It will return an awaitable task that gets finished when the state of the toast
-        notification has changed, If you don't want to wait for a state change, you can also
-        call this method without await at all.
+        It will return an awaitable task that will block until the toast gets removed
+        (same as `toast.show()` and `await toast.wait()` run together). If you don't
+        want to block, call this method without `await`.
         
-        The current state of toast is always available in `Toast.state` regardless of
-        the returned task. Toasts send at least 2 state changes, therefore `await`ing will
-        not guarantee the latest state.
+        The current state of toast is always available in `Toast.state` property regardless
+        of it is called with or without `await`.
         
-        If there is any templating key set, you can give a "data" dictionary to replace
-        binding keys with their values. You can also "mute_sound" to mute notification
-        sound regardless of "sound" attribute of this toast. 
+        If there is any templating key set, you can give a `data` dictionary to replace
+        binding keys with their values. You can also `mute_sound` to mute notification
+        sound regardless of `sound` attribute currently set on this toast.
 
         Parameters:
             data:
-                Dictionary of binding keys and their initial values to replace with.
-                See also update() method to update binding keys after showing the toast.
+                Key/value mapping of binding keys and their initial values to replace with.
+                Values must be a string, otherwise they will be cast into string anyways.
+                See also `update()` method to update binding keys after showing the toast.
             mute_sound:
-                Mute the sound of this notification, if set before. Useful if you 
-                want to show same toast but want to mute sound to prevent repetitive 
-                notification sounds without needing to change Toast.sound attribute for
-                each time.
+                Mute the sound of this notification without replacing existing sound,
+                if any. Useful if you want to show same toast but want to override to
+                mute the sound for once to prevent repetitive notification sounds.
         """
-        return self._show_toast(data, mute_sound)
+        loop = asyncio.get_running_loop()
+        custom_audio = self._init_toast(loop, mute_sound, data)
+        return asyncio.create_task(self._show_toast(data, custom_audio))
 
 
     async def wait(self):
@@ -715,83 +748,60 @@ class Toast:
         Waits until notification gets completely removed and is no longer usable.
         (e.g. cleared from Action Center, clicked or removed with `hide()`)
         """
-        if (not self._state_event) or (self._state is None):
+        if (not self._state_done) or (self._state is None):
             raise Exception(
                 "Toast needs to be shown first to be waited."
             )
-        while not self._state.removed:
-            await self._state_event.wait()
+        await self._state_done.wait()
         return self._state
 
     
-    def _show_toast(
+    async def _show_toast(
         self,
         data : Optional[Dict[str, str]],
-        mute_sound : bool
+        custom_audio : Optional[str]
     ):
         loop = asyncio.get_running_loop()
-        custom_audio = self._init_toast(loop, mute_sound, data)
 
-        assert self._imp_manager and self._imp_toast, "Not initialized"
-        assert self._state_event and (self._state is not None), "Invalid state"
+        assert self._imp_manager and self._imp_toast and self._state_done, "Not initialized"
+        assert self._state_queue and (self._state is not None), "Invalid state"
         self._imp_manager.show(self._imp_toast)
 
         self._play_sound(custom_audio, self.sound_loop or False)
 
         if self._callback_show:
-            if iscoroutinefunction(self._callback_show):
-                loop.call_soon_threadsafe(loop.create_task, self._callback_show(data))
-            else:
-                loop.call_soon_threadsafe(loop.create_task, asyncio.to_thread(self._callback_show, data))
+            wrapped_show = wrap_callback(self._callback_show)
+            if wrapped_show:
+                loop.create_task(wrapped_show(data))
 
-        async def wait_for_state_update(
-            loop : asyncio.AbstractEventLoop,
-            event: asyncio.Event, state: ToastState, listener: ToastResultCallbackType
-        ):
-            await event.wait()
-            if listener:
-                if iscoroutinefunction(listener):
-                    loop.call_soon_threadsafe(loop.create_task, listener(state))
-                else:
-                    loop.call_soon_threadsafe(loop.create_task, asyncio.to_thread(listener, state))
-            return state
+        wrapped_result = wrap_callback(self._callback_result)
 
-        return loop.create_task(
-            wait_for_state_update(loop, self._state_event, self._state, self._callback_result)
-        )
+        while not self._state._cleared:
+            state = await self._state_queue.get()
+            if wrapped_result:
+                loop.create_task(wrapped_result(state))
+            self._state_queue.task_done()
+        
+        self._state_done.set()
+        return self._state
 
 
-    def _hide_toast(self):
-        loop = asyncio.get_running_loop()
-
+    async def _hide_toast(self):
         # If any of these properties are not set, then assume that toast never displayed before.
         if (not self._imp_toast) or (not self._imp_manager):
-            return loop.create_task(asyncio.sleep(0, None))
+            return
         
         if self._fs:
             self._fs.close()
         self._play_sound(None)
 
-        assert self._state_event and (self._state is not None), "Invalid state"
+        assert self._state_queue and (self._state is not None), "Invalid state"
         self._imp_manager.hide(self._imp_toast)
-
-        async def wait_for_state_update(
-            loop : asyncio.AbstractEventLoop, 
-            event: asyncio.Event, state: ToastState, listener: ToastResultCallbackType
-        ):
-            # Toast may be already removed before hide() method.
-            while not state._cleared:
-                await event.wait()
-            return state
-
-        return loop.create_task(
-            wait_for_state_update(loop, self._state_event, self._state, self._callback_result)
-        )
 
 
     def _update_toast(
         self,
-        binding_data: Dict[str, str]
+        binding_data: Dict[str, Any]
     ):
         assert self._imp_toast and self._imp_manager, "Not initialized"
 
@@ -853,7 +863,8 @@ class Toast:
         # Fullfill Future objects when Windows API event handlers gets invoked.
 
         self._state = ToastState()
-        self._state_event = asyncio.Event()
+        self._state_queue = asyncio.Queue()
+        self._state_done = asyncio.Event()
 
         self._fut_completed = loop.create_future()
         self._fut_dismissed = loop.create_future()
@@ -976,7 +987,7 @@ class Toast:
                 return
             state_data = cast(_ToastContextState, future.result())
             assert self._imp_history and self._imp_toast, "Not initialized"
-            assert (self._state is not None) and self._state_event, "Invalid state"
+            assert (self._state is not None) and self._state_queue, "Invalid state"
             self._state._provided = True
             self._state._dismiss_reason = state_data.reason
             self._state._arguments = state_data.arguments
@@ -988,7 +999,7 @@ class Toast:
                     continue
                 if toast.data.values.get("__sentinel__") == self._sentinel:
                     self._state._cleared = state_data.cleared
-                    break            
+                    break
             if state_data.code:
                 raise Exception(
                     f"Toast failed with error code: {state_data.code}"
@@ -996,8 +1007,7 @@ class Toast:
             if self._state._cleared:
                 if self._fs:
                     self._fs.close()
-            self._state_event.set()
-            self._state_event.clear()
+            self._state_queue.put_nowait(self._state)
 
         self._fut_completed.add_done_callback(_set_toast_state_handler)
         self._fut_dismissed.add_done_callback(_set_toast_state_handler)
@@ -1017,6 +1027,30 @@ class Toast:
             )
         else:
             winsound.PlaySound(None, winsound.SND_MEMORY)
+
+
+    @staticmethod
+    def _get_windows_theme():
+        ui_settings = UISettings()
+
+        def read_color(color_type: UIColorType):
+            color = ui_settings.get_color_value(color_type)
+            return color.r, color.g, color.b,
+
+        bg_color = read_color(UIColorType.BACKGROUND)
+        fg_color = read_color(UIColorType.FOREGROUND)
+        ac_color = read_color(UIColorType.ACCENT)
+
+        lang = locale.windows_locale[windll.kernel32.GetUserDefaultUILanguage()]
+        high_contrast = AccessibilitySettings().high_contrast
+
+        return ToastThemeInfo(
+            has_high_contrast = high_contrast,
+            language_code = lang,
+            color_dark = bg_color,
+            color_light = fg_color,
+            color_accent = ac_color
+        )
 
 
     @staticmethod
@@ -1064,7 +1098,7 @@ class Toast:
             sound = json.get("sound", ToastSound.DEFAULT),
             sound_loop = bool(json.get("sound_loop", False)),
             remote_media = bool(json.get("remote_media", True)),
-            add_query_params = bool(json.get("add_query_params", False)),
+            add_query_params = bool(json.get("add_query_params", True)),
             expiration_time = None if "expiration_time" not in json else \
                 datetime.fromisoformat(json["expiration_time"]),
             app_id = str(json.get("app_id", "")) or None
@@ -1097,8 +1131,6 @@ class Toast:
             self._fut_dismissed.cancel()
         if self._fut_failed and not self._fut_failed.done():
             self._fut_failed.cancel()
-        if self._state_event:
-            self._state_event.set()
         
 
     def __copy__(self) -> "Toast":

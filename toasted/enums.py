@@ -34,6 +34,7 @@ __all__ = [
 ]
 
 from enum import Enum
+from typing import NamedTuple, Tuple, Union
 
 # --------------------
 # Internal
@@ -51,6 +52,12 @@ class _ToastXMLTag(Enum):
     ACTION = "action"
     HEADER = "header"
     INPUT = "input"
+
+class _ToastMediaProps(NamedTuple):
+    attribute: str
+    icon_size: int
+    icon_padding: Union[int, Tuple[int, int]]
+    is_sprite: bool = False
 
 
 # --------------------

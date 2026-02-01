@@ -24,15 +24,19 @@ __all__ = [
     "resolve_uri"
 ]
 
-from toasted.enums import _ToastElementType, ToastDismissReason, _ToastXMLTag
+import asyncio
+from enum import Enum
+import winreg
+from inspect import isawaitable, iscoroutinefunction
+from toasted.enums import _ToastElementType, ToastDismissReason, _ToastXMLTag, _ToastMediaProps
 
 from abc import ABC, abstractmethod
 from typing import (
     Dict,
+    Generator,
     NamedTuple,
     Any,
     Optional,
-    Sequence,
     Set, 
     Tuple, 
     Type, 
@@ -42,60 +46,123 @@ from typing import (
 )
 from os import environ
 import sys
-from urllib.parse import urlsplit, urlunsplit, parse_qsl
+from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 from pathlib import Path
 from base64 import b64decode
-import string
 from io import BytesIO
 from xml.etree import ElementTree as ET
 
-from PIL import Image, ImageFont, ImageDraw, ImageColor
-
-if sys.platform == "win32":
-    import winreg
-    from winrt.windows.storage import SystemDataPaths # pyright: ignore[reportMissingImports]
-else:
-    class Proxy:
-        def __getattribute__(self, _): raise Exception("Toasted is not supported on non-Windows platforms.") # noqa: E501
-    winreg = SystemDataPaths = Proxy()
+from PIL import Image, ImageFont, ImageDraw
 
 
 class ToastThemeInfo(NamedTuple):
-    contrast : Literal["high", "standard"]
-    lang : str
-    theme : Literal["dark", "light"]
+    has_high_contrast : bool
+    language_code : str
+    color_dark : Tuple[int, int, int]
+    color_light : Tuple[int, int, int]
+    color_accent : Tuple[int, int, int]
+
+    @property
+    def is_dark(self):
+        return sum(self.color_dark) == 0
+
+    @property
+    def is_accent_dark(self):
+        r, g, b = self.color_accent
+        return ((r * .2126) + (g * .7152) + (b * .0722)) >= 0.5
     
-    def as_params(self):
-        return {
-            "ms-contrast": self.contrast,
-            "ms-lang": self.lang,
-            "ms-theme": self.theme
-        }
+    def to_query(self, extended: bool = False) -> Dict[str, str]:
+        """
+        Returns theme information formatted as Microsoft query parameters to be added on image URLs.
+        If `extended` is True, also includes extra non-MS parameters (prefixed with `ti-`) which is non-standard.
+        """
+        # Not sure where to find the up-to-date information about the query parameters that being added
+        # by Windows to image URLs, but Microsoft briefly mentions query parameters here, so we replicate it.
+        # https://learn.microsoft.com/en-us/windows/uwp/launch-resume/tile-toast-language-scale-contrast#hosting-and-loading-images-in-the-cloud
+        # 
+        # See also:
+        # https://github.com/microsoft/AdaptiveCards/issues/1648
+        params = {}
+
+        params["ms-contrast"] = "high" if self.has_high_contrast else "standard"
+
+        # It seems the language code is always lowercase, so we convert Windows language code into that.
+        params["ms-lang"] = self.language_code.lower().replace("_", "-")
+
+        params["ms-theme"] = "dark" if sum(self.color_dark) == 0 else "light"
+
+        # Resolution scale (DPI) can have these enum values linked below, but I couldn't manage to get the scale
+        # programmatically in Python (as a non-UWP app), so we leave it as 100 right now.
+        # https://learn.microsoft.com/en-us/uwp/api/windows.graphics.display.resolutionscale?view=winrt-26100
+        params["ms-scale"] = "100"
+
+        if extended:
+            params["ti-accent"] = rgb_to_hex(self.color_accent)
+            params["ti-light"] = rgb_to_hex(self.color_light)
+            params["ti-dark"] = rgb_to_hex(self.color_dark)
+
+        return params
+
+
+class URIResultType(Enum):
+    LOCAL = "local"
+    REMOTE = "remote"
+    INLINE = "hex"
+    RESOURCE = "resource"
+    ICON = "icon"
+
+
+class URIResultIcon(NamedTuple):
+    charcode: int
+    font_file: Optional[Union[str, Literal["mdl2", "fluent"]]] = None
+    foreground: Optional[str] = None
+    background: Optional[str] = None
+    padding: Optional[int] = None
+    size: Optional[int] = None
+    
+    def to_value(self):
+        output = {}
+        for k, v in self._asdict().items():
+            if v is not None:
+                output[k] = v
+        return urlencode(output)
+    
+    @staticmethod
+    def from_value(value: str):
+        output = {}
+        for k, v in dict(parse_qsl(value, keep_blank_values = True)).items():
+            if v is not None:
+                output[k] = str(v) if not v.isnumeric() else int(v)
+        return URIResultIcon(**output)
 
 
 class URIResult(NamedTuple):
     value: str
-    type: Literal["local", "remote", "hex", "resource"]
+    type: URIResultType
 
 
 def resolve_uri(
-    uri : str
+    uri: str,
+    theme_info: Optional[ToastThemeInfo]
 ) -> URIResult:
     """
     Resolve a local file path or an URI locating a file or remote source.
     """
-    split = urlsplit(uri, allow_fragments = False)
+    split = urlsplit(uri, scheme = "file", allow_fragments = True)
 
     # See here for all file path formats on Windows:
     # https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats
     # UNC and DOS paths are not supported.
 
-    # Relative file path.
-    # e.g. "./myfolder/myfile"
-    if not split.scheme:
+    # A local path
+    if split.scheme == "file":
+        # Parsing "file://C:/Users" makes netloc to have "C:", but adding another forward slash
+        # into "file://" scheme (like "file:///C:/Users") breaks the splitting, since netloc would become empty.
+        # So, we manually remove the slash to make 3 slashes behave same with 2 slashes if there is no netloc.
+        path = Path(split.netloc + split.path if split.netloc else split.netloc + split.path.removeprefix("/"))
         return URIResult(
-            value = str(Path(split.path).resolve().absolute()),
-            type = "local"
+            value = str(path.resolve().absolute()),
+            type = URIResultType.LOCAL
         )
 
     # Drive letters as a scheme, should also work on mixed slashes due to URL normalization above.
@@ -103,7 +170,7 @@ def resolve_uri(
     elif (len(split.scheme) == 1) and (ord(split.scheme) in range(97, 123)):
         return URIResult(
             value = str(Path(f"{split.scheme}:{split.path}").resolve().absolute()),
-            type = "local"
+            type = URIResultType.LOCAL
         )
 
     # UWP apps has additional schemes:
@@ -120,7 +187,7 @@ def resolve_uri(
         # Other schemes should be used instead for working with absolute paths. 
         return URIResult(
             value = str((Path.cwd() / path.relative_to(path.anchor)).resolve().absolute()),
-            type = "local"
+            type = URIResultType.LOCAL
         )
 
     # "ms-appdata" scheme returns the location of appdata folder.
@@ -154,7 +221,7 @@ def resolve_uri(
 
         return URIResult(
             value = str(resolved.absolute()),
-            type = "local"
+            type = URIResultType.LOCAL
         )
 
     # "ms-winsoundevent" scheme is used for default toast notification sound enum,
@@ -164,25 +231,14 @@ def resolve_uri(
     elif split.scheme == "ms-winsoundevent":
         return URIResult(
             value = f"ms-winsoundevent:{split.path}",
-            type = "resource"
-        )
-
-    # "file" scheme should resolve path same as without the scheme.
-    elif split.scheme == "file":
-        # Parsing "file://C:/Users" makes netloc to have "C:", but adding another forward slash
-        # into "file://" scheme (like "file:///C:/Users") breaks the splitting, since netloc would become empty.
-        # So, we manually remove the slash to make 3 slashes behave same with 2 slashes if there is no netloc.
-        path = Path(split.netloc + split.path if split.netloc else split.netloc + split.path.removeprefix("/"))
-        return URIResult(
-            value = str(path.resolve().absolute()),
-            type = "local"
+            type = URIResultType.RESOURCE
         )
 
     # If scheme is "http" or "https", left as-is.
     elif (split.scheme == "http") or (split.scheme == "https"):
         return URIResult(
             value = urlunsplit(split),
-            type = "remote"
+            type = URIResultType.REMOTE
         )
 
     # Allow returning arbitrary bytes if scheme is "data" to avoid needing to have an actual
@@ -194,36 +250,46 @@ def resolve_uri(
         if data_uri.count(";base64,") == 1:
             return URIResult(
                 value = b64decode(data_uri.split(";base64,")[-1]).hex(),
-                type = "hex"
+                type = URIResultType.INLINE
             )
 
         raise ValueError(f"Invalid base64 data URI: '{uri}'")
 
-    # Extract icons from Windows icon.
+    # Pick an icon from system.
     elif split.scheme == "icon":
-        values = dict(parse_qsl(split.query))
         hex_value = (split.netloc or split.path).removeprefix("/").removeprefix("U+").removeprefix("0x")
-        hex_digits = set(string.hexdigits)
-
-        if not all(c in hex_digits for c in hex_value):
-            raise ValueError(
-                f"Icon URI path needs to be a hex value of character point: '{uri}'"
-            )
-
-        icon_data = get_icon_from_font(
-            charcode = int(hex_value, 16),
-            font_file = str(get_icon_font_default()),
-            foreground = ImageColor.getrgb(values.get("foreground", None) or "#000000FF"), # noqa: E501
-            background = ImageColor.getrgb(values.get("background", None) or "#00000000"), # noqa: E501
-            icon_padding = int(values.get("padding", None) or 0)
-        )
 
         return URIResult(
-            value = icon_data.hex(),
-            type = "hex"
+            value = URIResultIcon.from_value(f"charcode={int(hex_value, 16)}&{split.query}").to_value(),
+            type = URIResultType.ICON
         )
 
     raise ValueError(f"Invalid or unsupported URI: '{uri}'")
+
+
+def rgb_to_hex(
+    color: Union[Tuple[int, int, int], Tuple[int, int, int, int]]
+):
+    """
+    Converts RGB tuple to a hexadecimal string.
+    """
+    value = 0
+    for i, c in enumerate(color):
+        value += max(0, min(c, 255)) << (len(color) - (i + 1)) * 8
+    return value.to_bytes(len(color), "big").hex()
+
+
+def hex_to_rgb(
+    value: str
+) -> Union[Tuple[int, int, int], Tuple[int, int, int, int]]:
+    color = int.from_bytes(bytes.fromhex(value.removeprefix("#")), "big")
+    result = []
+    if len(value) == 8:
+        result.append((color >> 24) & 0xFF)
+    result.append((color >> 16) & 0xFF)
+    result.append((color >> 8) & 0xFF)
+    result.append(color & 0xFF)
+    return tuple(result)
 
 
 def is_in_venv() -> bool:
@@ -245,13 +311,13 @@ def is_in_venv() -> bool:
 
 
 def get_icon_from_font(
-    charcode : int,
-    font_file : Union[str, bytes],
-    icon_size : int = 64,
-    icon_padding : int = 0,
-    background : "Image._Color" = (0, 0, 0, 0), # type: ignore
-    foreground : "Image._Color" = (255, 255, 255, 255), # type: ignore
-    icon_format : str = "png"
+    charcode: int,
+    font_file: Union[str, bytes],
+    icon_size: int,
+    icon_padding: Union[int, Tuple[int, int]],
+    background: str,
+    foreground: str,
+    icon_format: str = "png"
 ) -> bytes:
     """
     Create a image with a character from given icon font file 
@@ -262,13 +328,14 @@ def get_icon_from_font(
 
     https://learn.microsoft.com/en-us/windows/apps/design/style/segoe-ui-symbol-font
     """
-    image_size = icon_size + icon_padding
-    image = Image.new("RGBA", (image_size, image_size), background)
+    v_padding, h_padding = (icon_padding, icon_padding) if type(icon_padding) is int else icon_padding # type: ignore
+    image = Image.new("RGBA", (v_padding + icon_size, h_padding + icon_size), hex_to_rgb(background)) # type: ignore
     draw = ImageDraw.Draw(image)
     if not font_file:
         raise ValueError("No font has provided!")
     asset_font = ImageFont.truetype(
-        font_file, size = icon_size, 
+        font_file,
+        size = icon_size, 
         layout_engine = ImageFont.Layout.BASIC
     )
     text_content = chr(charcode)
@@ -280,13 +347,30 @@ def get_icon_from_font(
         )
     # Draw text to the image.
     draw.text(
-        xy = (image_size // 2, image_size // 2), text = text_content,
-        fill = foreground, font = asset_font, align = "center", 
-        anchor = "mm", spacing = 0
+        xy = ((v_padding + icon_size) // 2, (h_padding + icon_size) // 2),
+        text = text_content,
+        fill = hex_to_rgb(foreground),
+        font = asset_font,
+        align = "center",
+        anchor = "mm",
+        spacing = 0
     )
     buffer = BytesIO()
     image.save(buffer, icon_format)
     return buffer.getvalue()
+
+
+def wrap_callback(caller):
+    if caller is None:
+        return None
+    async def wrapped(*args):
+        if iscoroutinefunction(caller):
+            await caller(*args)
+            return
+        result = await asyncio.to_thread(caller, *args)
+        if isawaitable(result):
+            await result
+    return wrapped
 
 
 def get_icon_fonts_path() -> List[Tuple[Literal["mdl2", "fluent"], Path]]:
@@ -371,7 +455,7 @@ def get_windows_build() -> int:
     return sys.getwindowsversion().build
 
 
-def get_icon_font_default() -> Path:
+def get_icon_font_default(font_type: Optional[Literal["fluent", "mdl2"]] = None) -> Optional[Path]:
     """
     Returns the path of recommended icon font
     to be used in toast icons.
@@ -380,11 +464,12 @@ def get_icon_font_default() -> Path:
     # Windows 11 comes with fluent icons by default.
     if get_windows_build() >= 22000:
         if "fluent" in fonts:
-            return fonts["fluent"]
+            if (not font_type) or (font_type == "fluent"):
+                return fonts["fluent"]
     # For Windows 10, prefer MDL2 instead.
     if "mdl2" in fonts:
-        return fonts["mdl2"]
-    raise ValueError("Couldn't find an available icon font.")
+        if (not font_type) or (font_type == "mdl2"):
+            return fonts["mdl2"]
 
 
 class ToastBase(ABC):
@@ -455,13 +540,11 @@ class _ToastContextState(NamedTuple):
 class ToastElement(ToastBase):
     _registry : Set[Type["ToastElement"]] = set()
     _etype : _ToastElementType
-    _euri : Sequence[str]
     _ename : _ToastXMLTag
 
-    def __init_subclass__(cls, tag : _ToastXMLTag, slot : _ToastElementType, uri_keys : Sequence[str] = (), **kwargs) -> None:
+    def __init_subclass__(cls, tag : _ToastXMLTag, slot : _ToastElementType, **kwargs) -> None:
         super().__init_subclass__(**kwargs)
         cls._etype = slot
-        cls._euri = uri_keys
         cls._ename = tag
         cls._registry.add(cls)
 
@@ -477,6 +560,9 @@ class ToastElement(ToastBase):
         raise ValueError(
             f"Element couldn't found with name \"{_type}\"."
         )
+
+    def _uri_holder(self) -> Generator[_ToastMediaProps, None, None]:
+        yield from []
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}>"
